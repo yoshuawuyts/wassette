@@ -1,24 +1,18 @@
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
 use mcp_sdk::server::Server;
 use mcp_sdk::transport::ServerStdioTransport;
 use mcp_sdk::types::{
     CallToolRequest, CallToolResponse, ListRequest, ResourcesListResponse, ServerCapabilities,
     ToolDefinition, ToolResponseContent, ToolsListResponse,
 };
-use mossaka::mcp::types;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::task::block_in_place;
-use wasmtime::component::{bindgen, Component, Linker};
+use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiView};
-
-bindgen!({
-    world: "mcp",
-    path: "mcp.wit",
-    async: true,
-});
 
 struct MyWasi {
     ctx: WasiCtx,
@@ -56,7 +50,7 @@ async fn main() -> Result<()> {
 
     let component = Arc::new(Component::from_file(
         &engine,
-        "/Users/mossaka/Developer/mossaka/mcp-wasmtime/examples/filesystem/filesystem.wasm",
+        "/Users/mossaka/Developer/mossaka/mcp-wasmtime/examples/filesystem2/filesystem2.wasm",
     )?);
 
     let wasm_env = WasmEnv {
@@ -73,8 +67,7 @@ async fn main() -> Result<()> {
             let wasm_env = wasm_env.clone();
             move |req: ListRequest| -> Result<ToolsListResponse> {
                 block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(list_tools(req, wasm_env.clone()))
+                    tokio::runtime::Handle::current().block_on(list_tools(req, wasm_env.clone()))
                 })
             }
         })
@@ -83,8 +76,7 @@ async fn main() -> Result<()> {
             move |req: CallToolRequest| -> Result<CallToolResponse> {
                 block_in_place(|| {
                     // Synchronously block on the async call
-                    tokio::runtime::Handle::current()
-                        .block_on(call_tool(req, wasm_env.clone()))
+                    tokio::runtime::Handle::current().block_on(call_tool(req, wasm_env.clone()))
                 })
             }
         })
@@ -107,7 +99,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn new_store_and_instance(env: &WasmEnv) -> Result<(Store<MyWasi>, wasmtime::component::Instance)> {
+async fn new_store_and_instance(
+    env: &WasmEnv,
+) -> Result<(Store<MyWasi>, wasmtime::component::Instance, &Component)> {
     let mut linker = Linker::new(&env.engine);
     let _ = wasmtime_wasi::add_to_linker_async(&mut linker);
 
@@ -124,86 +118,76 @@ async fn new_store_and_instance(env: &WasmEnv) -> Result<(Store<MyWasi>, wasmtim
         },
     );
     let instance = linker.instantiate_async(&mut store, &env.component).await?;
-    Ok((store, instance))
+    Ok((store, instance, &env.component))
 }
 
-pub async  fn call_tool(req: CallToolRequest, env: WasmEnv) -> Result<CallToolResponse> {
-    let (mut store, instance) = new_store_and_instance(&env).await?;
+pub async fn call_tool(req: CallToolRequest, env: WasmEnv) -> Result<CallToolResponse> {
+    let (mut store, instance, component) = new_store_and_instance(&env).await?;
+    // get the schema of the component
+    let schema = component_exports_to_json_schema(&component, store.engine(), true);
+    let empty_tools = vec![];
+    let tools_array = schema["tools"].as_array().unwrap_or(&empty_tools);
+    let maybe_tool = tools_array
+        .iter()
+        .find(|tool_json| tool_json["name"].as_str() == Some(&req.name));
 
-    let func = instance
-        .get_export(&mut store, None, "mossaka:mcp/tool-server@0.1.0")
-        .and_then(|i| instance.get_export(&mut store, Some(&i), "call-tool"))
-        .context("missing the expected 'call-tool' function")?;
-    let call_tool_fn = instance
-        .get_typed_func::<(types::CallToolRequest,), (types::CallToolResponse,)>(
-            &mut store, &func,
-        )?;
-
-    let wit_req = types::CallToolRequest {
-        name: req.name,
-        arguments: req.arguments
-            .map(|v| serde_json::to_string(&v))
-            .transpose()?, // Converts Option<Result<_,_>> to Result<Option<_>,_>
-        meta: req.meta
-            .map(|v| serde_json::to_string(&v))
-            .transpose()?,
+    // get the tool schema
+    let tool = match maybe_tool {
+        Some(t) => t,
+        None => bail!("No exported function named '{}'", req.name),
     };
 
-    let wit_resp = call_tool_fn.call_async(&mut store, (wit_req,)).await?;
-    let (response,) = wit_resp;
+    tracing::info!("Calling tool '{}'", req.name);
 
-    let content = response
-        .content
-        .into_iter()
-        .map(|c| match c {
-            types::ToolResponseContent::Text(t) => ToolResponseContent::Text { text: t.text },
-        })
-        .collect();
+    let arguments_json = req.arguments.clone().unwrap_or(Value::Null);
+    let argument_vals = component2json::json_to_vals(&arguments_json)
+        .context("Failed to parse the function arguments into Val")?;
 
+    let export_index = instance.get_export(&mut store, None, &req.name).context(format!(
+        "Failed to get export '{}'",
+        &req.name,
+    ))?;
+
+    let func = instance
+        .get_func(&mut store, &export_index)
+        .context("Failed to get function")?;
+    
+    let output_schema = tool["outputSchema"].clone();
+    let mut results = json_to_vals(&output_schema)?;
+    func.call_async(&mut store, &argument_vals, &mut results).await?;
+
+    let results = serde_json::to_string_pretty(&vals_to_json(&results))?;
     Ok(CallToolResponse {
-        content,
-        is_error: response.is_error,
-        meta: match response.meta {
-            Some(m) => Some(serde_json::from_str(&m)?),
-            None => None,
-        },
+        content: vec![ToolResponseContent::Text {
+            text: results,
+        }],
+        is_error: None,
+        meta: None,
     })
 }
 
 pub async fn list_tools(_req: ListRequest, env: WasmEnv) -> Result<ToolsListResponse> {
-    let (mut store, instance) = new_store_and_instance(&env).await?;
+    let (store, _, component) = new_store_and_instance(&env).await?;
 
-    let func = instance
-        .get_export(&mut store, None, "mossaka:mcp/tool-server@0.1.0")
-        .and_then(|i| instance.get_export(&mut store, Some(&i), "list-tools"))
-        .context("missing the expected 'list-tools' function")?;
-    let call_tool_fn = instance
-        .get_typed_func::<(types::ListToolsRequest,), (types::ListToolsResponse,)>(
-            &mut store, &func,
-        )?;
-    let wit_req = types::ListToolsRequest {
-        cursor: None,
-        meta: None,
-    };
-
-    let (response,) = call_tool_fn.call_async(&mut store, (wit_req,)).await?;
-    
-
+    let schema = component2json::component_exports_to_json_schema(component, store.engine(), false);
     let mut tools = Vec::new();
-    for t in response.tools {
-        tools.push(ToolDefinition {
-            name: t.name,
-            description: t.description,
-            input_schema: serde_json::from_str(&t.input_schema)?,
-        });
+    if let Some(arr) = schema["tools"].as_array() {
+        for t in arr {
+            let name = t["name"].as_str().unwrap_or("<unnamed>").to_string();
+            let description: Option<String> = t["description"].as_str().map(|s| s.to_string());
+            let input_schema = t["inputSchema"].clone(); // already a serde_json::Value
+
+            tools.push(ToolDefinition {
+                name,
+                description,
+                input_schema,
+            });
+        }
     }
 
     Ok(ToolsListResponse {
         tools,
-        next_cursor: response.next_cursor,
-        meta: match response.meta {
-            Some(m) => Some(serde_json::from_str(&m)?),
-            None => None,
-        },
+        next_cursor: None,
+        meta: None,
     })
 }

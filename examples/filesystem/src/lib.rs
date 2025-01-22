@@ -4,9 +4,9 @@ mod bindings;
 use std::{env, fs, path::{Path, PathBuf}};
 
 use anyhow::{Result, anyhow};
-
-use bindings::{exports::mossaka::mcp::tool_server::{CallToolRequest, CallToolResponse, Guest, ListToolsRequest, ListToolsResponse}, mossaka::mcp::types::{ToolDefinition, ToolResponseContent, ToolResponseText}};
 use serde_json::Value;
+use bindings::{exports::mossaka::mcp::tool_server::{CallToolRequest, CallToolResponse, Guest, ListToolsRequest, ListToolsResponse}, mossaka::mcp::types::{ToolDefinition, ToolResponseContent, ToolResponseText}};
+
 
 struct Component;
 

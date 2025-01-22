@@ -13,7 +13,18 @@ tracing = "0.1"
 mcp-sdk = "0.0.3"
 wasmtime = "29.0.1"
 wasmtime-wasi = "29.0.1"
+component2json = { path = "crates/component2json" }
 
 [[bin]]
 name = "mcp-wasmtime"
 path = "src/main.rs"
+
+[[bin]]
+name = "inspect"
+path = "cmd/main.rs"
+
+[workspace]
+members = [
+    "mcp-wasmtime",
+    "crates/component2json",
+]
