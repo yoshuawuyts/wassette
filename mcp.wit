@@ -1,0 +1,56 @@
+package mossaka:mcp@0.1.0;
+
+interface types {
+    // see: https://github.com/WebAssembly/component-model/issues/335
+    type json = string; 
+
+    record list-tools-request {
+        cursor: option<string>,
+        meta: option<json>
+    }
+
+    record list-tools-response {
+        tools: list<tool-definition>,
+        next-cursor: option<string>,
+        meta: option<json>
+    }
+
+    record tool-definition {
+        name: string,
+        description: option<string>,
+        input-schema: json,
+    }
+
+    record call-tool-request {
+        name: string,
+        arguments: option<json>,
+        meta: option<json>
+    }
+
+    record tool-response-text {
+        text: string
+    }
+
+    variant tool-response-content {
+        text(tool-response-text),
+        // TODO add image and resource
+    }
+
+    record call-tool-response {
+        content: list<tool-response-content>,
+        is-error: option<bool>,
+        meta: option<json>
+    }
+}
+
+
+interface tool-server {
+    use types.{call-tool-request, call-tool-response, list-tools-request, list-tools-response};
+
+    call-tool: func(req: call-tool-request) -> call-tool-response;
+    list-tools: func(req: list-tools-request) -> list-tools-response;
+}
+
+world mcp {
+  export tool-server;
+}
