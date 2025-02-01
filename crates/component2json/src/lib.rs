@@ -182,7 +182,6 @@ fn type_to_json_schema(t: &Type) -> Value {
 }
 
 fn component_func_to_schema(name: &str, func: &ComponentFunc, output: bool) -> serde_json::Value {
-    // 1) Collect parameters into a JSON object schema
     let mut properties = serde_json::Map::new();
     let mut required = Vec::new();
 
@@ -197,7 +196,6 @@ fn component_func_to_schema(name: &str, func: &ComponentFunc, output: bool) -> s
         "required": required
     });
 
-    // 2) Build the "tool" object
     let mut tool_obj = serde_json::Map::new();
     tool_obj.insert("name".to_string(), json!(name));
     tool_obj.insert(
@@ -206,7 +204,6 @@ fn component_func_to_schema(name: &str, func: &ComponentFunc, output: bool) -> s
     );
     tool_obj.insert("inputSchema".to_string(), input_schema);
 
-    // 3) Optionally add output schema
     if output {
         let mut results_iter = func.results();
         let output_schema = match results_iter.len() {
@@ -228,7 +225,8 @@ fn component_func_to_schema(name: &str, func: &ComponentFunc, output: bool) -> s
 }
 
 fn gather_exported_functions(
-    export_name_prefix: &str,
+    export_name: &str,
+    previous_name: Option<String>,
     item: &ComponentItem,
     engine: &Engine,
     results: &mut Vec<Value>,
@@ -236,28 +234,52 @@ fn gather_exported_functions(
 ) {
     match item {
         ComponentItem::ComponentFunc(func) => {
-            let func_schema = component_func_to_schema(export_name_prefix, func, output);
-            results.push(func_schema);
+            let name = if let Some(prefix) = previous_name {
+                format!("{}.{}", prefix, export_name)
+            } else {
+                export_name.to_string()
+            };
+            results.push(component_func_to_schema(&name, func, output));
         }
         ComponentItem::Component(sub_component) => {
+            let previous_name = Some(export_name.to_string());
             for (export_name, export_item) in sub_component.exports(engine) {
-                let nested_name = format!("{}::{}", export_name_prefix, export_name);
-                gather_exported_functions(&nested_name, &export_item, engine, results, output);
+                gather_exported_functions(
+                    &export_name,
+                    previous_name.clone(),
+                    &export_item,
+                    engine,
+                    results,
+                    output,
+                );
             }
         }
         ComponentItem::ComponentInstance(instance) => {
+            let previous_name = Some(export_name.to_string());
             for (export_name, export_item) in instance.exports(engine) {
-                let nested_name = format!("{}::{}", export_name_prefix, export_name);
-                gather_exported_functions(&nested_name, &export_item, engine, results, output);
+                gather_exported_functions(
+                    &export_name,
+                    previous_name.clone(),
+                    &export_item,
+                    engine,
+                    results,
+                    output,
+                );
             }
         }
         ComponentItem::CoreFunc(_)
         | ComponentItem::Module(_)
         | ComponentItem::Type(_)
-        | ComponentItem::Resource(_) => {
-            // Ignore these for now
-        }
+        | ComponentItem::Resource(_) => {}
     }
+}
+
+fn object_to_val(obj: &Map<String, Value>) -> Result<Val, ValError> {
+    let mut fields = Vec::new();
+    for (k, v) in obj {
+        fields.push((k.clone(), json_to_val(v)?));
+    }
+    Ok(Val::Record(fields))
 }
 
 pub fn component_exports_to_json_schema(
@@ -268,7 +290,14 @@ pub fn component_exports_to_json_schema(
     let mut tools_array = Vec::new();
 
     for (export_name, export_item) in component.component_type().exports(engine) {
-        gather_exported_functions(export_name, &export_item, engine, &mut tools_array, output);
+        gather_exported_functions(
+            export_name,
+            None,
+            &export_item,
+            engine,
+            &mut tools_array,
+            output,
+        );
     }
 
     json!({ "tools": tools_array })
@@ -300,19 +329,11 @@ pub fn json_to_val(value: &Value) -> Result<Val, ValError> {
     }
 }
 
-fn object_to_val(obj: &Map<String, Value>) -> Result<Val, ValError> {
-    let mut fields = Vec::new();
-    for (k, v) in obj {
-        fields.push((k.clone(), json_to_val(v)?));
-    }
-    Ok(Val::Record(fields))
-}
-
 pub fn json_to_vals(value: &Value) -> Result<Vec<Val>, ValError> {
     match value {
         Value::Object(obj) => {
             let mut results = Vec::new();
-            for (k, v) in obj {
+            for (_, v) in obj {
                 let subval = json_to_val(v)?;
                 results.push(subval);
             }
@@ -407,5 +428,83 @@ fn val_to_json(val: &Val) -> Value {
 
         Val::Flags(flags) => Value::Array(flags.iter().map(|f| Value::String(f.clone())).collect()),
         Val::Resource(res) => Value::String(format!("resource: {:?}", res)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use wasmtime::component::Val;
+
+    #[test]
+    fn test_string_val_conversion() {
+        let json_val = json!("hello");
+        let val = json_to_val(&json_val).unwrap();
+        assert!(matches!(val, Val::String(ref s) if s == "hello"));
+        assert_eq!(val_to_json(&val), json_val);
+    }
+
+    #[test]
+    fn test_list_val_conversion() {
+        let json_val = json!([1, 2, 3]);
+        let val = json_to_val(&json_val).unwrap();
+        assert!(matches!(val, Val::List(_)));
+        assert_eq!(val_to_json(&val), json_val);
+    }
+
+    #[test]
+    fn test_result_val_conversion() {
+        let ok_json = json!({"ok": "success"});
+        let ok_val = Val::Result(Ok(Some(Box::new(Val::String("success".to_string())))));
+        assert_eq!(val_to_json(&ok_val), ok_json);
+
+        let err_json = json!({"err": "error"});
+        let err_val = Val::Result(Err(Some(Box::new(Val::String("error".to_string())))));
+        assert_eq!(val_to_json(&err_val), err_json);
+    }
+
+    #[test]
+    fn test_tuple_val_conversion() {
+        let json_val = json!(["hello", 42]);
+        let val = Val::Tuple(vec![Val::String("hello".to_string()), Val::S64(42)]);
+        assert_eq!(val_to_json(&val), json_val);
+    }
+
+    #[test]
+    fn test_generate_function_schema() {
+        let engine = Engine::default();
+        let wat = r#"(component
+            (type (component
+                (type (component
+                    (type (list u8))
+                    (type (tuple string 0))
+                    (type (list 1))
+                    (type (result 2 (error string)))
+                    (type (func (param "name" string) (param "wit" 0) (result 3)))
+                    (export "generate" (func (type 4)))
+                ))
+                (export "foo:foo/foo" (component (type 0)))
+            ))
+            (export "foo" (type 0))
+            (@custom "package-docs" "\00{}")
+            (@producers (processed-by "wit-component" "0.223.0"))
+        )"#;
+        let component = Component::new(&engine, wat).unwrap();
+        let schema = component_exports_to_json_schema(&component, &engine, true);
+
+        let tools = schema.get("tools").unwrap().as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+
+        let generate_tool = &tools[0];
+        assert_eq!(generate_tool.get("name").unwrap(), "foo:foo/foo.generate");
+
+        let input_schema = generate_tool.get("inputSchema").unwrap();
+        let properties = input_schema.get("properties").unwrap().as_object().unwrap();
+        assert!(properties.contains_key("name"));
+        assert!(properties.contains_key("wit"));
+
+        let output_schema = generate_tool.get("outputSchema").unwrap();
+        assert!(output_schema.get("oneOf").is_some());
     }
 }
