@@ -433,9 +433,294 @@ fn val_to_json(val: &Val) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use serde_json::json;
     use wasmtime::component::Val;
+
+    #[test]
+    fn test_json_to_val_null() {
+        let json_val = Value::Null;
+        let val = json_to_val(&json_val).unwrap();
+        if let Val::Option(None) = val {
+        } else {
+            panic!("Expected Option(None) for null");
+        }
+        assert_eq!(val_to_json(&val), json!(null));
+    }
+
+    #[test]
+    fn test_json_to_val_bool() {
+        let json_val = json!(true);
+        let val = json_to_val(&json_val).unwrap();
+        assert!(matches!(val, Val::Bool(true)));
+        assert_eq!(val_to_json(&val), json!(true));
+    }
+
+    #[test]
+    fn test_json_to_val_integer() {
+        let json_val = json!(123);
+        let val = json_to_val(&json_val).unwrap();
+        assert!(matches!(val, Val::S64(123)));
+        assert_eq!(val_to_json(&val), json!(123));
+    }
+
+    #[test]
+    fn test_json_to_val_float() {
+        let json_val = json!(123.45);
+        let val = json_to_val(&json_val).unwrap();
+        if let Val::Float64(f) = val {
+            assert!((f - 123.45).abs() < 1e-6);
+        } else {
+            panic!("Expected Float64 variant");
+        }
+        if let Value::Number(n) = val_to_json(&val) {
+            let f_value = n.as_f64().unwrap();
+            assert!((f_value - 123.45).abs() < 1e-6);
+        } else {
+            panic!("Expected JSON number");
+        }
+    }
+
+    #[test]
+    fn test_json_to_val_string() {
+        let json_val = json!("test");
+        let val = json_to_val(&json_val).unwrap();
+        assert!(matches!(val, Val::String(ref s) if s == "test"));
+        assert_eq!(val_to_json(&val), json!("test"));
+    }
+
+    #[test]
+    fn test_json_to_val_array() {
+        let json_val = json!([1, 2, 3]);
+        let val = json_to_val(&json_val).unwrap();
+        if let Val::List(list) = val.clone() {
+            assert_eq!(list.len(), 3);
+            for (i, item) in list.iter().enumerate() {
+                assert!(matches!(item, Val::S64(n) if *n == i as i64 + 1));
+            }
+        } else {
+            panic!("Expected List variant");
+        }
+        let json_val = val_to_json(&val);
+        assert_eq!(json_val, json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn test_json_to_val_object() {
+        let json_val = json!({"a": 10, "b": false});
+        let val = json_to_val(&json_val).unwrap();
+        if let Val::Record(fields) = val.clone() {
+            let mut field_map: HashMap<&str, &Val> = HashMap::new();
+            for (k, v) in fields.iter() {
+                field_map.insert(k, v);
+            }
+            match field_map.get("a") {
+                Some(Val::S64(n)) => assert_eq!(*n, 10),
+                _ => panic!("Expected field 'a' to be S64(10)"),
+            }
+            match field_map.get("b") {
+                Some(Val::Bool(b)) => assert_eq!(*b, false),
+                _ => panic!("Expected field 'b' to be Bool(false)"),
+            }
+        } else {
+            panic!("Expected Record variant");
+        }
+        assert_eq!(val_to_json(&val), json_val);
+    }
+
+    #[test]
+    fn test_json_to_vals_with_object() {
+        let json_val = json!({"x": 5, "y": 6});
+        let vals = json_to_vals(&json_val).unwrap();
+        assert_eq!(vals.len(), 2);
+        let mut found_x = false;
+        let mut found_y = false;
+        for v in vals {
+            match v {
+                Val::S64(5) => found_x = true,
+                Val::S64(6) => found_y = true,
+                _ => {}
+            }
+        }
+        assert!(found_x && found_y);
+    }
+
+    #[test]
+    fn test_json_to_vals_with_non_object() {
+        let json_val = json!("single");
+        let vals = json_to_vals(&json_val).unwrap();
+        assert_eq!(vals.len(), 1);
+        assert!(matches!(vals[0], Val::String(ref s) if s == "single"));
+    }
+
+    #[test]
+    fn test_vals_to_json_empty() {
+        let json_val = vals_to_json(&[]);
+        assert_eq!(json_val, json!(null));
+    }
+
+    #[test]
+    fn test_vals_to_json_single() {
+        let val = Val::Bool(true);
+        let json_val = vals_to_json(&[val.clone()]);
+        assert_eq!(json_val, val_to_json(&val));
+    }
+
+    #[test]
+    fn test_vals_to_json_multiple() {
+        let vals_vec = vec![Val::S64(10), Val::String("multi".to_string())];
+        let json_val = vals_to_json(&vals_vec);
+        let obj = json_val.as_object().unwrap();
+        assert_eq!(obj.get("val0").unwrap(), &json!(10));
+        assert_eq!(obj.get("val1").unwrap(), &json!("multi"));
+    }
+
+    #[test]
+    fn test_val_to_json_bool() {
+        let val = Val::Bool(false);
+        assert_eq!(val_to_json(&val), json!(false));
+    }
+
+    #[test]
+    fn test_val_to_json_numbers() {
+        let s8 = Val::S8(-5);
+        assert_eq!(val_to_json(&s8), json!(-5));
+
+        let u8 = Val::U8(200);
+        assert_eq!(val_to_json(&u8), json!(200));
+
+        let s16 = Val::S16(-123);
+        assert_eq!(val_to_json(&s16), json!(-123));
+
+        let u16 = Val::U16(123);
+        assert_eq!(val_to_json(&u16), json!(123));
+
+        let s32 = Val::S32(-1000);
+        assert_eq!(val_to_json(&s32), json!(-1000));
+
+        let u32 = Val::U32(1000);
+        assert_eq!(val_to_json(&u32), json!(1000));
+
+        let s64 = Val::S64(-9999);
+        assert_eq!(val_to_json(&s64), json!(-9999));
+
+        let u64 = Val::U64(9999);
+        assert_eq!(val_to_json(&u64), json!(9999));
+    }
+
+    #[test]
+    fn test_val_to_json_floats() {
+        let float32 = Val::Float32(3.14);
+        if let Value::Number(n) = val_to_json(&float32) {
+            assert!((n.as_f64().unwrap() - 3.14).abs() < 1e-6);
+        } else {
+            panic!("Expected a JSON number for Float32");
+        }
+
+        let float64 = Val::Float64(2.718281828);
+        if let Value::Number(n) = val_to_json(&float64) {
+            assert!((n.as_f64().unwrap() - 2.718281828).abs() < 1e-9);
+        } else {
+            panic!("Expected a JSON number for Float64");
+        }
+    }
+
+    #[test]
+    fn test_val_to_json_char() {
+        let val = Val::Char('A');
+        assert_eq!(val_to_json(&val), json!("A"));
+    }
+
+    #[test]
+    fn test_val_to_json_string() {
+        let val = Val::String("hello".to_string());
+        assert_eq!(val_to_json(&val), json!("hello"));
+    }
+
+    #[test]
+    fn test_val_to_json_list() {
+        let val = Val::List(vec![Val::S64(1), Val::S64(2)]);
+        assert_eq!(val_to_json(&val), json!([1, 2]));
+    }
+
+    #[test]
+    fn test_val_to_json_record() {
+        let val = Val::Record(vec![
+            ("key1".to_string(), Val::Bool(true)),
+            ("key2".to_string(), Val::String("value".to_string())),
+        ]);
+        let json_val = val_to_json(&val);
+        let obj = json_val.as_object().unwrap();
+        assert_eq!(obj.get("key1").unwrap(), &json!(true));
+        assert_eq!(obj.get("key2").unwrap(), &json!("value"));
+    }
+
+    #[test]
+    fn test_val_to_json_tuple() {
+        let val = Val::Tuple(vec![Val::S64(42), Val::String("tuple".to_string())]);
+        assert_eq!(val_to_json(&val), json!([42, "tuple"]));
+    }
+
+    #[test]
+    fn test_val_to_json_variant() {
+        let variant_with = Val::Variant("tag1".to_string(), Some(Box::new(Val::S64(99))));
+        let json_with = val_to_json(&variant_with);
+        let obj_with = json_with.as_object().unwrap();
+        assert_eq!(obj_with.get("tag").unwrap(), &json!("tag1"));
+        assert_eq!(obj_with.get("val").unwrap(), &json!(99));
+
+        let variant_without = Val::Variant("tag2".to_string(), None);
+        let json_without = val_to_json(&variant_without);
+        let obj_without = json_without.as_object().unwrap();
+        assert_eq!(obj_without.get("tag").unwrap(), &json!("tag2"));
+        assert!(obj_without.get("val").is_none());
+    }
+
+    #[test]
+    fn test_val_to_json_enum() {
+        let val = Val::Enum("green".to_string());
+        assert_eq!(val_to_json(&val), json!("green"));
+    }
+
+    #[test]
+    fn test_val_to_json_option() {
+        let none_option = Val::Option(None);
+        assert_eq!(val_to_json(&none_option), json!(null));
+
+        let some_option = Val::Option(Some(Box::new(Val::String("some".to_string()))));
+        assert_eq!(val_to_json(&some_option), json!("some"));
+    }
+
+    #[test]
+    fn test_val_to_json_result() {
+        let ok_result = Val::Result(Ok(Some(Box::new(Val::String("ok".to_string())))));
+        let json_ok = val_to_json(&ok_result);
+        let obj_ok = json_ok.as_object().unwrap();
+        assert_eq!(obj_ok.get("ok").unwrap(), &json!("ok"));
+
+        let err_result = Val::Result(Err(Some(Box::new(Val::String("err".to_string())))));
+        let json_err = val_to_json(&err_result);
+        let obj_err = json_err.as_object().unwrap();
+        assert_eq!(obj_err.get("err").unwrap(), &json!("err"));
+
+        let ok_none = Val::Result(Ok(None));
+        let json_ok_none = val_to_json(&ok_none);
+        let obj_ok_none = json_ok_none.as_object().unwrap();
+        assert_eq!(obj_ok_none.get("ok").unwrap(), &json!(null));
+
+        let err_none = Val::Result(Err(None));
+        let json_err_none = val_to_json(&err_none);
+        let obj_err_none = json_err_none.as_object().unwrap();
+        assert_eq!(obj_err_none.get("err").unwrap(), &json!(null));
+    }
+
+    #[test]
+    fn test_val_to_json_flags() {
+        let val = Val::Flags(vec!["f1".to_string(), "f2".to_string()]);
+        assert_eq!(val_to_json(&val), json!(["f1", "f2"]));
+    }
 
     #[test]
     fn test_string_val_conversion() {
@@ -446,29 +731,14 @@ mod tests {
     }
 
     #[test]
-    fn test_list_val_conversion() {
-        let json_val = json!([1, 2, 3]);
-        let val = json_to_val(&json_val).unwrap();
-        assert!(matches!(val, Val::List(_)));
-        assert_eq!(val_to_json(&val), json_val);
-    }
-
-    #[test]
-    fn test_result_val_conversion() {
-        let ok_json = json!({"ok": "success"});
-        let ok_val = Val::Result(Ok(Some(Box::new(Val::String("success".to_string())))));
-        assert_eq!(val_to_json(&ok_val), ok_json);
-
-        let err_json = json!({"err": "error"});
-        let err_val = Val::Result(Err(Some(Box::new(Val::String("error".to_string())))));
-        assert_eq!(val_to_json(&err_val), err_json);
-    }
-
-    #[test]
-    fn test_tuple_val_conversion() {
-        let json_val = json!(["hello", 42]);
-        let val = Val::Tuple(vec![Val::String("hello".to_string()), Val::S64(42)]);
-        assert_eq!(val_to_json(&val), json_val);
+    fn test_component_exports_empty() {
+        let engine = Engine::default();
+        // A minimal component with no exports
+        let wat = r#"(component)"#;
+        let component = Component::new(&engine, wat).unwrap();
+        let schema = component_exports_to_json_schema(&component, &engine, false);
+        let tools = schema.get("tools").unwrap().as_array().unwrap();
+        assert_eq!(tools.len(), 0);
     }
 
     #[test]
@@ -491,9 +761,10 @@ mod tests {
         ];
 
         for (i, tool) in tools.iter().enumerate() {
-            let fully_qualified_name = format!("{}.{}", "component:filesystem2/fs", expected_exports[i]);
+            let fully_qualified_name =
+                format!("{}.{}", "component:filesystem2/fs", expected_exports[i]);
             assert_eq!(json!(tool.get("name").unwrap()), fully_qualified_name);
-            
+
             let input_schema = tool.get("inputSchema").unwrap();
             let properties = input_schema.get("properties").unwrap().as_object().unwrap();
             assert!(properties.contains_key("path"));
@@ -504,15 +775,27 @@ mod tests {
 
             let output_schema = tool.get("outputSchema").unwrap();
             if expected_exports[i] == "list-directory" {
-                assert!(output_schema.get("oneOf").unwrap().as_array().unwrap()[0]
-                    .get("properties").unwrap()
-                    .get("ok").unwrap()
-                    .get("type").unwrap() == "array");
+                assert!(
+                    output_schema.get("oneOf").unwrap().as_array().unwrap()[0]
+                        .get("properties")
+                        .unwrap()
+                        .get("ok")
+                        .unwrap()
+                        .get("type")
+                        .unwrap()
+                        == "array"
+                );
             } else {
-                assert!(output_schema.get("oneOf").unwrap().as_array().unwrap()[0]
-                    .get("properties").unwrap()
-                    .get("ok").unwrap()
-                    .get("type").unwrap() == "string");
+                assert!(
+                    output_schema.get("oneOf").unwrap().as_array().unwrap()[0]
+                        .get("properties")
+                        .unwrap()
+                        .get("ok")
+                        .unwrap()
+                        .get("type")
+                        .unwrap()
+                        == "string"
+                );
             }
         }
     }
