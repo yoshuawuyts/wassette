@@ -472,6 +472,52 @@ mod tests {
     }
 
     #[test]
+    fn test_root_component_exports() {
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        config.async_support(true);
+        let engine = Engine::new(&config).unwrap();
+        let component = Component::from_file(&engine, "src/filesystem.wasm").unwrap();
+        let schema = component_exports_to_json_schema(&component, &engine, true);
+
+        let tools = schema.get("tools").unwrap().as_array().unwrap();
+        assert_eq!(tools.len(), 4);
+
+        let expected_exports = vec![
+            "list-directory",
+            "read-file",
+            "search-file",
+            "get-file-info",
+        ];
+
+        for (i, tool) in tools.iter().enumerate() {
+            let fully_qualified_name = format!("{}.{}", "component:filesystem2/fs", expected_exports[i]);
+            assert_eq!(json!(tool.get("name").unwrap()), fully_qualified_name);
+            
+            let input_schema = tool.get("inputSchema").unwrap();
+            let properties = input_schema.get("properties").unwrap().as_object().unwrap();
+            assert!(properties.contains_key("path"));
+
+            if expected_exports[i] == "search-file" {
+                assert!(properties.contains_key("pattern"));
+            }
+
+            let output_schema = tool.get("outputSchema").unwrap();
+            if expected_exports[i] == "list-directory" {
+                assert!(output_schema.get("oneOf").unwrap().as_array().unwrap()[0]
+                    .get("properties").unwrap()
+                    .get("ok").unwrap()
+                    .get("type").unwrap() == "array");
+            } else {
+                assert!(output_schema.get("oneOf").unwrap().as_array().unwrap()[0]
+                    .get("properties").unwrap()
+                    .get("ok").unwrap()
+                    .get("type").unwrap() == "string");
+            }
+        }
+    }
+
+    #[test]
     fn test_generate_function_schema() {
         let engine = Engine::default();
         let wat = r#"(component
