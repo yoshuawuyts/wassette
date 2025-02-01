@@ -143,24 +143,22 @@ pub async fn call_tool(req: CallToolRequest, env: WasmEnv) -> Result<CallToolRes
     let argument_vals = component2json::json_to_vals(&arguments_json)
         .context("Failed to parse the function arguments into Val")?;
 
-    let export_index = instance.get_export(&mut store, None, &req.name).context(format!(
-        "Failed to get export '{}'",
-        &req.name,
-    ))?;
+    let export_index = instance
+        .get_export(&mut store, None, &req.name)
+        .context(format!("Failed to get export '{}'", &req.name,))?;
 
     let func = instance
         .get_func(&mut store, &export_index)
         .context("Failed to get function")?;
-    
+
     let output_schema = tool["outputSchema"].clone();
     let mut results = json_to_vals(&output_schema)?;
-    func.call_async(&mut store, &argument_vals, &mut results).await?;
+    func.call_async(&mut store, &argument_vals, &mut results)
+        .await?;
 
     let results = serde_json::to_string_pretty(&vals_to_json(&results))?;
     Ok(CallToolResponse {
-        content: vec![ToolResponseContent::Text {
-            text: results,
-        }],
+        content: vec![ToolResponseContent::Text { text: results }],
         is_error: None,
         meta: None,
     })

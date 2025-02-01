@@ -16,10 +16,7 @@ async fn main() -> Result<()> {
     config.async_support(true);
     let engine = Arc::new(Engine::new(&config)?);
 
-    let component = Arc::new(Component::from_file(
-        &engine,
-        path,
-    )?);
+    let component = Arc::new(Component::from_file(&engine, path)?);
 
     let schema = component2json::component_exports_to_json_schema(&component, &engine, true);
     if let Some(arr) = schema["tools"].as_array() {
@@ -30,8 +27,14 @@ async fn main() -> Result<()> {
             let output_schema = t["outputSchema"].clone(); // already a serde_json::Value
 
             println!("{}, {:?}", name, description);
-            println!("input schema: {}", serde_json::to_string_pretty(&input_schema)?);
-            println!("output schema: {}", serde_json::to_string_pretty(&output_schema)?);
+            println!(
+                "input schema: {}",
+                serde_json::to_string_pretty(&input_schema)?
+            );
+            println!(
+                "output schema: {}",
+                serde_json::to_string_pretty(&output_schema)?
+            );
         }
     }
     Ok(())
