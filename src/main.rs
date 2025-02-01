@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
+use manager::LifecycleManager;
 use mcp_sdk::server::Server;
-use mcp_sdk::transport::ServerStdioTransport;
+use mcp_sdk::transport::{JsonRpcNotification, ServerStdioTransport, Transport};
 use mcp_sdk::types::{
     CallToolRequest, CallToolResponse, ListRequest, ResourcesListResponse, ServerCapabilities,
     ToolDefinition, ToolResponseContent, ToolsListResponse,
@@ -13,6 +14,8 @@ use tokio::task::block_in_place;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiView};
+
+mod manager;
 
 struct MyWasi {
     ctx: WasiCtx,
@@ -29,12 +32,6 @@ impl WasiView for MyWasi {
     }
 }
 
-#[derive(Clone)]
-pub struct WasmEnv {
-    engine: Arc<Engine>,
-    component: Arc<Component>,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -47,36 +44,36 @@ async fn main() -> Result<()> {
     config.wasm_component_model(true);
     config.async_support(true);
     let engine = Arc::new(Engine::new(&config)?);
+    let (tools_changed_sender, mut tools_changed_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let manager = Arc::new(manager::LifecycleManager::new(
+        engine.clone(),
+        tools_changed_sender,
+    ));
 
-    let component = Arc::new(Component::from_file(
-        &engine,
-        "/Users/mossaka/Developer/mossaka/mcp-wasmtime/examples/filesystem2/filesystem2.wasm",
-    )?);
+    // manager.load_component("filesystem", "/Users/mossaka/Developer/mossaka/mcp-wasmtime/examples/filesystem2/filesystem2.wasm").await?;
 
-    let wasm_env = WasmEnv {
-        engine: engine.clone(),
-        component: component.clone(),
-    };
+    let protocol = ServerStdioTransport;
 
-    let server = Server::builder(ServerStdioTransport)
+    let server = Server::builder(protocol.clone())
         .capabilities(ServerCapabilities {
-            tools: Some(json!({})),
+            tools: Some(json!({"listChanged": true})),
             ..Default::default()
         })
         .request_handler("tools/list", {
-            let wasm_env = wasm_env.clone();
+            let manager_clone = manager.clone();
             move |req: ListRequest| -> Result<ToolsListResponse> {
                 block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(list_tools(req, wasm_env.clone()))
+                    tokio::runtime::Handle::current()
+                        .block_on(list_tools(req, manager_clone.clone()))
                 })
             }
         })
         .request_handler("tools/call", {
-            let wasm_env = wasm_env.clone();
+            let manager_clone = manager.clone();
             move |req: CallToolRequest| -> Result<CallToolResponse> {
                 block_in_place(|| {
-                    // Synchronously block on the async call
-                    tokio::runtime::Handle::current().block_on(call_tool(req, wasm_env.clone()))
+                    tokio::runtime::Handle::current()
+                        .block_on(call_tool(req, manager_clone.clone()))
                 })
             }
         })
@@ -88,25 +85,44 @@ async fn main() -> Result<()> {
             })
         })
         .build();
+
     let server_handle = {
         let server = server;
         tokio::spawn(async move { server.listen().await })
     };
 
-    server_handle
-        .await?
-        .map_err(|e| anyhow::anyhow!("Server error: {}", e))?;
+    let notification_task = tokio::spawn(async move {
+        while let Some(()) = tools_changed_receiver.recv().await {
+            tracing::info!("Tools changed, sending notification");
+            let notification = JsonRpcNotification {
+                method: "notifications/tools/list_changed".to_string(),
+                ..Default::default()
+            };
+            let msg = mcp_sdk::transport::JsonRpcMessage::Notification(notification);
+            let msg_string = serde_json::to_string(&msg).expect("Failed to serialize JSON");
+            tracing::info!("Sending notification: {}", msg_string);
+            protocol.send(&msg).expect("Failed to send notification");
+        }
+    });
+
+    tokio::select! {
+        res = server_handle => {
+            res??;
+        }
+        _ = notification_task => {}
+    }
     Ok(())
 }
 
 async fn new_store_and_instance(
-    env: &WasmEnv,
-) -> Result<(Store<MyWasi>, wasmtime::component::Instance, &Component)> {
-    let mut linker = Linker::new(&env.engine);
+    engine: Arc<Engine>,
+    component: Arc<Component>,
+) -> Result<(Store<MyWasi>, wasmtime::component::Instance)> {
+    let mut linker = Linker::new(&engine);
     let _ = wasmtime_wasi::add_to_linker_async(&mut linker);
 
     let mut store = Store::new(
-        &env.engine,
+        &engine,
         MyWasi {
             ctx: WasiCtx::builder()
                 .inherit_args()
@@ -117,72 +133,181 @@ async fn new_store_and_instance(
             table: wasmtime_wasi::ResourceTable::default(),
         },
     );
-    let instance = linker.instantiate_async(&mut store, &env.component).await?;
-    Ok((store, instance, &env.component))
+    let instance = linker.instantiate_async(&mut store, &component).await?;
+    Ok((store, instance))
 }
 
-pub async fn call_tool(req: CallToolRequest, env: WasmEnv) -> Result<CallToolResponse> {
-    let (mut store, instance, component) = new_store_and_instance(&env).await?;
-    // get the schema of the component
-    let schema = component_exports_to_json_schema(&component, store.engine(), true);
-    let empty_tools = vec![];
-    let tools_array = schema["tools"].as_array().unwrap_or(&empty_tools);
-    let maybe_tool = tools_array
-        .iter()
-        .find(|tool_json| tool_json["name"].as_str() == Some(&req.name));
+pub async fn call_tool(
+    req: CallToolRequest,
+    manager: Arc<LifecycleManager>,
+) -> Result<CallToolResponse> {
+    match req.name.as_str() {
+        "load-component" => {
+            let args = req.arguments.unwrap_or(Value::Null);
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing 'id' in arguments for load-component"))?;
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing 'path' in arguments for load-component"))?;
 
-    // get the tool schema
-    let tool = match maybe_tool {
-        Some(t) => t,
-        None => bail!("No exported function named '{}'", req.name),
-    };
+            manager.load_component(id, path).await?;
 
-    tracing::info!("Calling tool '{}'", req.name);
-
-    let arguments_json = req.arguments.clone().unwrap_or(Value::Null);
-    let argument_vals = component2json::json_to_vals(&arguments_json)
-        .context("Failed to parse the function arguments into Val")?;
-
-    let export_index = instance
-        .get_export(&mut store, None, &req.name)
-        .context(format!("Failed to get export '{}'", &req.name,))?;
-
-    let func = instance
-        .get_func(&mut store, &export_index)
-        .context("Failed to get function")?;
-
-    let output_schema = tool["outputSchema"].clone();
-    let mut results = json_to_vals(&output_schema)?;
-    func.call_async(&mut store, &argument_vals, &mut results)
-        .await?;
-
-    let results = serde_json::to_string_pretty(&vals_to_json(&results))?;
-    Ok(CallToolResponse {
-        content: vec![ToolResponseContent::Text { text: results }],
-        is_error: None,
-        meta: None,
-    })
-}
-
-pub async fn list_tools(_req: ListRequest, env: WasmEnv) -> Result<ToolsListResponse> {
-    let (store, _, component) = new_store_and_instance(&env).await?;
-
-    let schema = component2json::component_exports_to_json_schema(component, store.engine(), false);
-    let mut tools = Vec::new();
-    if let Some(arr) = schema["tools"].as_array() {
-        for t in arr {
-            let name = t["name"].as_str().unwrap_or("<unnamed>").to_string();
-            let description: Option<String> = t["description"].as_str().map(|s| s.to_string());
-            let input_schema = t["inputSchema"].clone(); // already a serde_json::Value
-
-            tools.push(ToolDefinition {
-                name,
-                description,
-                input_schema,
+            let reply = json!({
+                "status": "component loaded",
+                "id": id
             });
+            Ok(CallToolResponse {
+                content: vec![ToolResponseContent::Text {
+                    text: reply.to_string(),
+                }],
+                is_error: None,
+                meta: None,
+            })
+        }
+        "unload-component" => {
+            let args = req.arguments.unwrap_or(Value::Null);
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Missing 'id' in arguments for unload-component"))?;
+
+            manager.unload_component(id).await?;
+
+            let reply = json!({
+                "status": "component unloaded",
+                "id": id
+            });
+            Ok(CallToolResponse {
+                content: vec![ToolResponseContent::Text {
+                    text: reply.to_string(),
+                }],
+                is_error: None,
+                meta: None,
+            })
+        }
+        _ => {
+            let arguments_json = req.arguments.clone().unwrap_or(Value::Null);
+            let (component_id_opt, new_arguments) = if let Some(obj) = arguments_json.as_object() {
+                let mut obj_clone = obj.clone();
+                let comp_id = obj_clone
+                    .remove("componentId")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()));
+                (comp_id, Value::Object(obj_clone))
+            } else {
+                (None, req.arguments.unwrap_or(Value::Null))
+            };
+            let component = manager.get_component(component_id_opt.as_deref()).await?;
+            let (mut store, instance) =
+                new_store_and_instance(manager.engine.clone(), component.clone()).await?;
+
+            let schema = component_exports_to_json_schema(&component, store.engine(), true);
+            let empty_tools = vec![];
+            let tools_array = schema["tools"].as_array().unwrap_or(&empty_tools);
+            let maybe_tool = tools_array
+                .iter()
+                .find(|tool_json| tool_json["name"].as_str() == Some(&req.name));
+
+            let tool = match maybe_tool {
+                Some(t) => t,
+                None => bail!("No exported function named '{}'", req.name),
+            };
+
+            tracing::info!("Calling tool '{}'", req.name);
+
+            let arguments_json = new_arguments;
+            let argument_vals = component2json::json_to_vals(&arguments_json)
+                .context("Failed to parse the function arguments into Val")?;
+
+            let export_index = instance
+                .get_export(&mut store, None, &req.name)
+                .context(format!("Failed to get export '{}'", &req.name,))?;
+
+            let func = instance
+                .get_func(&mut store, &export_index)
+                .context("Failed to get function")?;
+
+            let output_schema = tool["outputSchema"].clone();
+            let mut results = json_to_vals(&output_schema)?;
+            func.call_async(&mut store, &argument_vals, &mut results)
+                .await?;
+
+            let results = serde_json::to_string_pretty(&vals_to_json(&results))?;
+            Ok(CallToolResponse {
+                content: vec![ToolResponseContent::Text { text: results }],
+                is_error: None,
+                meta: None,
+            })
         }
     }
+}
 
+pub async fn list_tools(
+    _req: ListRequest,
+    manager: Arc<LifecycleManager>,
+) -> Result<ToolsListResponse> {
+    let mut tools = Vec::new();
+    {
+        let comps = manager.components.read().await;
+        for (comp_id, component) in comps.iter() {
+            let schema =
+                component_exports_to_json_schema(component, manager.engine.as_ref(), false);
+            if let Some(arr) = schema.get("tools").and_then(|v| v.as_array()) {
+                for tool_json in arr {
+                    let mut tool = tool_json.clone();
+                    if let Some(obj) = tool.as_object_mut() {
+                        obj.insert("componentId".to_string(), json!(comp_id));
+                    }
+                    let name = tool
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("<unnamed>")
+                        .to_string();
+                    let description = tool
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let input_schema = tool.get("inputSchema").cloned().unwrap_or(json!({}));
+                    tools.push(ToolDefinition {
+                        name,
+                        description,
+                        input_schema,
+                    });
+                }
+            }
+        }
+    }
+    // Add management tools for component lifecycle actions.
+    tools.push(ToolDefinition {
+        name: "load-component".to_string(),
+        description: Some(
+            "Dynamically loads a new WebAssembly component. Arguments: id (string), path (string)"
+                .to_string(),
+        ),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "path": {"type": "string"}
+            },
+            "required": ["id", "path"]
+        }),
+    });
+    tools.push(ToolDefinition {
+        name: "unload-component".to_string(),
+        description: Some(
+            "Dynamically unloads a WebAssembly component. Argument: id (string)".to_string(),
+        ),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"}
+            },
+            "required": ["id"]
+        }),
+    });
     Ok(ToolsListResponse {
         tools,
         next_cursor: None,
