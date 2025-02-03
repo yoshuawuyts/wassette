@@ -3,6 +3,9 @@ name = "mcp-wasmtime"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["crates/*"]
+
 [workspace.dependencies]
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -15,6 +18,11 @@ wasmtime = "29.0.1"
 wasmtime-wasi = "29.0.1"
 component2json = { path = "crates/component2json" }
 lifecycle-manager = { path = "crates/lifecycle-manager" }
+tonic = { version = "0.12", features = ["transport", "codegen", "prost"] }
+prost = "0.13"
+
+[build-dependencies]
+tonic-build = { version = "0.12", features = ["prost"] }
 
 [dependencies]
 tokio = { workspace = true }
@@ -28,22 +36,17 @@ wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 component2json = { workspace = true }
 lifecycle-manager = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
 
 [[bin]]
 name = "mcp-wasmtime"
 path = "src/main.rs"
 
-# [[bin]]
-# name = "inspect"
-# path = "cmd/main.rs"
+[[bin]]
+name = "wasmtimed"
+path = "src/wasmtimed.rs"
 
 [[bin]]
 name = "component2json"
 path = "cmd/component2json.rs"
-
-[workspace]
-members = [
-    ".",
-    "crates/component2json", 
-    "crates/lifecycle-manager",
-]

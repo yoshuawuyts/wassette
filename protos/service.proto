@@ -31,9 +31,16 @@ message GetComponentResponse {
   string details = 2; // Additional details about the component.
 }
 
+message ListComponentsRequest {}
+
+message ListComponentsResponse {
+  repeated string ids = 1;
+}
+
 // Service definition for lifecycle management.
 service LifecycleManagerService {
   rpc LoadComponent(LoadComponentRequest) returns (LoadComponentResponse);
   rpc UnloadComponent(UnloadComponentRequest) returns (UnloadComponentResponse);
   rpc GetComponent(GetComponentRequest) returns (GetComponentResponse);
+  rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
 }

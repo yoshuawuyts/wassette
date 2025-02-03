@@ -1,7 +1,6 @@
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::RwLock;
 use tracing;
 
@@ -13,15 +12,13 @@ use wasmtime::Engine;
 pub struct LifecycleManager {
     pub engine: Arc<Engine>,
     pub components: Arc<RwLock<HashMap<String, Arc<Component>>>>,
-    pub tools_changed_sender: UnboundedSender<()>,
 }
 
 impl LifecycleManager {
-    pub fn new(engine: Arc<Engine>, tools_changed_sender: UnboundedSender<()>) -> Self {
+    pub fn new(engine: Arc<Engine>) -> Self {
         Self {
             engine,
             components: Arc::new(RwLock::new(HashMap::new())),
-            tools_changed_sender,
         }
     }
 
@@ -36,9 +33,6 @@ impl LifecycleManager {
             .await
             .insert(id.to_string(), arc_component);
         tracing::info!("Loaded component '{}' from path '{}'", id, path);
-        self.tools_changed_sender
-            .send(())
-            .expect("Failed to send tools changed message");
         Ok(())
     }
 
@@ -47,9 +41,6 @@ impl LifecycleManager {
         let mut comps = self.components.write().await;
         if comps.remove(id).is_some() {
             tracing::info!("Unloaded component '{}'", id);
-            self.tools_changed_sender
-                .send(())
-                .expect("Failed to send tools changed message");
             Ok(())
         } else {
             bail!("Component with id '{}' not found", id);
@@ -62,16 +53,22 @@ impl LifecycleManager {
         let comps = self.components.read().await;
         if let Some(id) = component_id {
             if let Some(comp) = comps.get(id) {
+                tracing::info!("Retrieved component '{}'", id);
                 return Ok(comp.clone());
             } else {
                 bail!("Component with id '{}' not found", id);
             }
         } else {
             if comps.len() == 1 {
+                tracing::info!("Retrieved single component");
                 return Ok(comps.values().next().unwrap().clone());
             } else {
                 bail!("Multiple components loaded. Please specify component id.");
             }
         }
+    }
+
+    pub async fn list_components(&self) -> Vec<String> {
+        self.components.read().await.keys().cloned().collect()
     }
 }
