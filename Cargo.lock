@@ -1009,6 +1009,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lifecycle-manager"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tokio",
+ "tracing",
+ "wasmtime",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1072,6 +1082,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "component2json",
+ "lifecycle-manager",
  "mcp-sdk",
  "serde",
  "serde_json",

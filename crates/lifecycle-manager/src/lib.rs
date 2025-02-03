@@ -12,8 +12,8 @@ use wasmtime::Engine;
 #[derive(Clone)]
 pub struct LifecycleManager {
     pub engine: Arc<Engine>,
-    pub(crate) components: Arc<RwLock<HashMap<String, Arc<Component>>>>,
-    tools_changed_sender: UnboundedSender<()>,
+    pub components: Arc<RwLock<HashMap<String, Arc<Component>>>>,
+    pub tools_changed_sender: UnboundedSender<()>,
 }
 
 impl LifecycleManager {

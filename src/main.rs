@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
-use manager::LifecycleManager;
+use lifecycle_manager::LifecycleManager;
 use mcp_sdk::server::Server;
 use mcp_sdk::transport::{JsonRpcNotification, ServerStdioTransport, Transport};
 use mcp_sdk::types::{
@@ -14,8 +14,6 @@ use tokio::task::block_in_place;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiView};
-
-mod manager;
 
 struct MyWasi {
     ctx: WasiCtx,
@@ -45,7 +43,7 @@ async fn main() -> Result<()> {
     config.async_support(true);
     let engine = Arc::new(Engine::new(&config)?);
     let (tools_changed_sender, mut tools_changed_receiver) = tokio::sync::mpsc::unbounded_channel();
-    let manager = Arc::new(manager::LifecycleManager::new(
+    let manager = Arc::new(lifecycle_manager::LifecycleManager::new(
         engine.clone(),
         tools_changed_sender,
     ));
