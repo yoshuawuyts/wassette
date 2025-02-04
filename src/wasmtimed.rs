@@ -1,10 +1,10 @@
+use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
+use lifecycle_manager::LifecycleManager;
 use std::sync::Arc;
 use tonic::{transport::Server, Request, Response, Status};
-use lifecycle_manager::LifecycleManager;
 use wasmtime::component::Linker;
 use wasmtime::Store;
 use wasmtime_wasi::WasiCtxBuilder;
-use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
 
 pub mod lifecycle {
     tonic::include_proto!("lifecycle");
@@ -12,11 +12,9 @@ pub mod lifecycle {
 
 use lifecycle::{
     lifecycle_manager_service_server::{LifecycleManagerService, LifecycleManagerServiceServer},
-    LoadComponentRequest, LoadComponentResponse,
+    CallComponentRequest, CallComponentResponse, GetComponentRequest, GetComponentResponse,
+    ListComponentsRequest, ListComponentsResponse, LoadComponentRequest, LoadComponentResponse,
     UnloadComponentRequest, UnloadComponentResponse,
-    GetComponentRequest, GetComponentResponse,
-    ListComponentsRequest, ListComponentsResponse,
-    CallComponentRequest, CallComponentResponse,
 };
 
 struct WasiState {
@@ -60,32 +58,36 @@ impl LifecycleManagerServiceImpl {
         let mut store = Store::new(self.manager.engine.as_ref(), state);
 
         let instance = linker.instantiate_async(&mut store, component).await?;
-        
+
         let params: serde_json::Value = serde_json::from_str(parameters)?;
         let argument_vals = json_to_vals(&params)?;
-        
+
         let export = instance
             .get_export(&mut store, None, function_name)
             .ok_or_else(|| anyhow::anyhow!("Function not found: {}", function_name))?;
-            
+
         let func = instance
             .get_func(&mut store, &export)
             .ok_or_else(|| anyhow::anyhow!("Export is not a function: {}", function_name))?;
 
-        let schema = component_exports_to_json_schema(component, self.manager.engine.as_ref(), true);
-        let tools = schema.get("tools")
+        let schema =
+            component_exports_to_json_schema(component, self.manager.engine.as_ref(), true);
+        let tools = schema
+            .get("tools")
             .and_then(|v| v.as_array())
             .ok_or_else(|| anyhow::anyhow!("No tools found in component"))?;
 
-        let tool = tools.iter()
+        let tool = tools
+            .iter()
             .find(|t| t.get("name").and_then(|n| n.as_str()) == Some(function_name))
             .ok_or_else(|| anyhow::anyhow!("Tool not found"))?;
 
         let output_schema = tool["outputSchema"].clone();
         let mut results = json_to_vals(&output_schema)?;
-        
-        func.call_async(&mut store, &argument_vals, &mut results).await?;
-        
+
+        func.call_async(&mut store, &argument_vals, &mut results)
+            .await?;
+
         let result_json = vals_to_json(&results);
         Ok(serde_json::to_string(&result_json)?)
     }
@@ -98,11 +100,12 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         request: Request<LoadComponentRequest>,
     ) -> Result<Response<LoadComponentResponse>, Status> {
         let req = request.into_inner();
-        self.manager.load_component(&req.id, &req.path)
+        self.manager
+            .load_component(&req.id, &req.path)
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
-        Ok(Response::new(LoadComponentResponse { 
-            status: format!("component loaded: {}", req.id) 
+        Ok(Response::new(LoadComponentResponse {
+            status: format!("component loaded: {}", req.id),
         }))
     }
 
@@ -111,11 +114,12 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         request: Request<UnloadComponentRequest>,
     ) -> Result<Response<UnloadComponentResponse>, Status> {
         let req = request.into_inner();
-        self.manager.unload_component(&req.id)
+        self.manager
+            .unload_component(&req.id)
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
-        Ok(Response::new(UnloadComponentResponse { 
-            status: format!("component unloaded: {}", req.id) 
+        Ok(Response::new(UnloadComponentResponse {
+            status: format!("component unloaded: {}", req.id),
         }))
     }
 
@@ -124,12 +128,19 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         request: Request<GetComponentRequest>,
     ) -> Result<Response<GetComponentResponse>, Status> {
         let req = request.into_inner();
-        let component = self.manager.get_component(
-            if req.id.is_empty() { None } else { Some(&req.id) }
-        ).await.map_err(|e| Status::not_found(e.to_string()))?;
-        
-        let schema = component_exports_to_json_schema(&component, self.manager.engine.as_ref(), true);
-        Ok(Response::new(GetComponentResponse { 
+        let component = self
+            .manager
+            .get_component(if req.id.is_empty() {
+                None
+            } else {
+                Some(&req.id)
+            })
+            .await
+            .map_err(|e| Status::not_found(e.to_string()))?;
+
+        let schema =
+            component_exports_to_json_schema(&component, self.manager.engine.as_ref(), true);
+        Ok(Response::new(GetComponentResponse {
             id: req.id.clone(),
             details: serde_json::to_string(&schema).unwrap_or_default(),
         }))
@@ -139,7 +150,7 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         &self,
         _request: Request<ListComponentsRequest>,
     ) -> Result<Response<ListComponentsResponse>, Status> {
-       let ids = self.manager.list_components().await;
+        let ids = self.manager.list_components().await;
         Ok(Response::new(ListComponentsResponse { ids }))
     }
 
@@ -148,12 +159,17 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         request: Request<CallComponentRequest>,
     ) -> Result<Response<CallComponentResponse>, Status> {
         let req = request.into_inner();
-        
-        let component = self.manager.get_component(Some(&req.id))
+
+        let component = self
+            .manager
+            .get_component(Some(&req.id))
             .await
             .map_err(|e| Status::not_found(e.to_string()))?;
 
-        match self.execute_component_call(&component, &req.function_name, &req.parameters).await {
+        match self
+            .execute_component_call(&component, &req.function_name, &req.parameters)
+            .await
+        {
             Ok(result) => Ok(Response::new(CallComponentResponse {
                 result: result.into_bytes(),
                 error: String::new(),
@@ -185,8 +201,8 @@ impl WasmtimeD {
 
     pub async fn serve(self) -> Result<(), Box<dyn std::error::Error>> {
         let addr = self.addr.parse()?;
-        let svc = LifecycleManagerServiceImpl { 
-            manager: self.manager 
+        let svc = LifecycleManagerServiceImpl {
+            manager: self.manager,
         };
 
         tracing::info!("Daemon listening on {}", addr);
@@ -200,8 +216,10 @@ impl WasmtimeD {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
-    
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     let daemon = WasmtimeD::new("[::1]:50051".to_string())?;
     daemon.serve().await
 }

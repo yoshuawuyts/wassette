@@ -1,23 +1,22 @@
-use std::sync::Arc;
-use tonic::transport::Channel;
-use tokio::task::block_in_place;
-use mcp_sdk::transport::ServerStdioTransport;
+use anyhow::Result;
 use mcp_sdk::server::Server;
+use mcp_sdk::transport::ServerStdioTransport;
 use mcp_sdk::types::{
-    CallToolRequest, CallToolResponse, ListRequest, ToolsListResponse, 
-    ToolResponseContent, ToolDefinition, ServerCapabilities,
+    CallToolRequest, CallToolResponse, ListRequest, PromptsListResponse, ResourcesListResponse,
+    ServerCapabilities, ToolDefinition, ToolResponseContent, ToolsListResponse,
 };
 use serde_json::{json, Value};
-use anyhow::Result;
+use std::sync::Arc;
+use tokio::task::block_in_place;
+use tonic::transport::Channel;
 
 pub mod lifecycle {
     tonic::include_proto!("lifecycle");
 }
 
 use lifecycle::{
-    lifecycle_manager_service_client::LifecycleManagerServiceClient,
-    GetComponentRequest, LoadComponentRequest, UnloadComponentRequest,
-    ListComponentsRequest, CallComponentRequest,
+    lifecycle_manager_service_client::LifecycleManagerServiceClient, CallComponentRequest,
+    GetComponentRequest, ListComponentsRequest, LoadComponentRequest, UnloadComponentRequest,
 };
 
 pub struct Client {
@@ -27,7 +26,8 @@ pub struct Client {
 
 impl Client {
     pub async fn new(grpc_addr: String) -> Result<Self, Box<dyn std::error::Error>> {
-        let grpc_client = LifecycleManagerServiceClient::connect(format!("http://{}", grpc_addr)).await?;
+        let grpc_client =
+            LifecycleManagerServiceClient::connect(format!("http://{}", grpc_addr)).await?;
         Ok(Self {
             transport: ServerStdioTransport,
             grpc_client: Arc::new(tokio::sync::Mutex::new(grpc_client)),
@@ -54,7 +54,6 @@ impl Client {
                                     id: id.clone(),
                                 }).await?;
                                 let schema: Value = serde_json::from_str(&response.into_inner().details)?;
-                                
                                 if let Some(arr) = schema.get("tools").and_then(|v| v.as_array()) {
                                     for tool_json in arr {
                                         let name = tool_json.get("name")
@@ -121,7 +120,7 @@ impl Client {
                     block_in_place(|| {
                         tokio::runtime::Handle::current().block_on(async {
                             let mut client = grpc_client.lock().await;
-                            
+
                             match req.name.as_str() {
                                 "load-component" => {
                                     let args = req.arguments.unwrap_or(Value::Null);
@@ -208,6 +207,24 @@ impl Client {
                     })
                 }
             })
+            .request_handler("prompts/list", {
+                |_req: ListRequest| -> Result<PromptsListResponse> {
+                    Ok(PromptsListResponse {
+                        prompts: vec![],
+                        next_cursor: None,
+                        meta: None,
+                    })
+                }
+            })
+            .request_handler("resources/list", {
+                move |_req: ListRequest| -> Result<ResourcesListResponse> {
+                    Ok(ResourcesListResponse {
+                        resources: vec![],
+                        next_cursor: None,
+                        meta: None,
+                    })
+                }
+            })
             .build();
 
         tokio::select! {
@@ -223,7 +240,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_level(tracing::Level::INFO)
         .with_writer(std::io::stderr)
         .init();
-    
+
     let client = Client::new("[::1]:50051".to_string()).await?;
     client.serve().await
 }
