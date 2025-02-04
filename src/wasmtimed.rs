@@ -15,10 +15,12 @@ use tonic::{Request, Response, Status};
 use wasmtime::component::Linker;
 use wasmtime::Store;
 use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 struct WasiState {
     ctx: wasmtime_wasi::WasiCtx,
     table: wasmtime_wasi::ResourceTable,
+    http: wasmtime_wasi_http::WasiHttpCtx,
 }
 
 impl wasmtime_wasi::WasiView for WasiState {
@@ -28,6 +30,15 @@ impl wasmtime_wasi::WasiView for WasiState {
 
     fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
         &mut self.ctx
+    }
+}
+impl WasiHttpView for WasiState {
+    fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
+        &mut self.table
+    }
+
+    fn ctx(&mut self) -> &mut WasiHttpCtx {
+        &mut self.http
     }
 }
 
@@ -45,15 +56,21 @@ impl LifecycleManagerServiceImpl {
     ) -> Result<String, Box<dyn std::error::Error>> {
         let mut linker = Linker::new(self.manager.engine.as_ref());
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
 
         let table = wasmtime_wasi::ResourceTable::default();
         let ctx = WasiCtxBuilder::new()
             .inherit_stdio()
             .inherit_args()
             .inherit_env()
+            .inherit_network()
+            .allow_tcp(true)
+            .allow_udp(true)
+            .allow_ip_name_lookup(true)
             .build();
+        let http = WasiHttpCtx::new();
 
-        let state = WasiState { ctx, table };
+        let state = WasiState { ctx, table, http };
         let mut store = Store::new(self.manager.engine.as_ref(), state);
 
         let instance = linker.instantiate_async(&mut store, component).await?;
