@@ -16,6 +16,7 @@ tracing = "0.1"
 mcp-sdk = "0.0.3"
 wasmtime = "29.0.1"
 wasmtime-wasi = "29.0.1"
+wasmtime-wasi-http = "29.0.1"
 component2json = { path = "crates/component2json" }
 lifecycle-manager = { path = "crates/lifecycle-manager" }
 lifecycle-proto = { path = "crates/lifecycle-proto" }
@@ -38,6 +39,7 @@ lifecycle-manager = { workspace = true }
 mcp-wasmtime-server = { workspace = true }
 lifecycle-proto = { workspace = true }
 tonic = { workspace = true }
+wasmtime-wasi-http = { workspace = true }
 
 [[bin]]
 name = "mcp-wasmtime"
@@ -50,3 +52,7 @@ path = "src/wasmtimed.rs"
 [[bin]]
 name = "component2json"
 path = "cmd/component2json.rs"
+
+[[bin]]
+name = "fetch-runtime"
+path = "cmd/fetch-runtime.rs"
