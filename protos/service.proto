@@ -37,10 +37,23 @@ message ListComponentsResponse {
   repeated string ids = 1;
 }
 
+// Request and response for calling a component.
+message CallComponentRequest {
+  string id = 1;
+  string parameters = 2;
+  string function_name = 3;
+}
+
+message CallComponentResponse {
+  bytes result = 1;
+  string error = 2;
+}
+
 // Service definition for lifecycle management.
 service LifecycleManagerService {
   rpc LoadComponent(LoadComponentRequest) returns (LoadComponentResponse);
   rpc UnloadComponent(UnloadComponentRequest) returns (UnloadComponentResponse);
   rpc GetComponent(GetComponentRequest) returns (GetComponentResponse);
   rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
+  rpc CallComponent(CallComponentRequest) returns (CallComponentResponse);
 }

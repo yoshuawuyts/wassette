@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tonic::transport::Channel;
 use tokio::task::block_in_place;
-use mcp_sdk::transport::{JsonRpcNotification, ServerStdioTransport, Transport};
+use mcp_sdk::transport::ServerStdioTransport;
 use mcp_sdk::server::Server;
 use mcp_sdk::types::{
     CallToolRequest, CallToolResponse, ListRequest, ToolsListResponse, 
@@ -9,10 +9,6 @@ use mcp_sdk::types::{
 };
 use serde_json::{json, Value};
 use anyhow::Result;
-use wasmtime::component::{Component, Linker};
-use wasmtime::{Store, Engine};
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiView};
-use component2json::{json_to_vals, vals_to_json};
 
 pub mod lifecycle {
     tonic::include_proto!("lifecycle");
@@ -21,46 +17,8 @@ pub mod lifecycle {
 use lifecycle::{
     lifecycle_manager_service_client::LifecycleManagerServiceClient,
     GetComponentRequest, LoadComponentRequest, UnloadComponentRequest,
-    ListComponentsRequest,
+    ListComponentsRequest, CallComponentRequest,
 };
-
-struct MyWasi {
-    ctx: WasiCtx,
-    table: wasmtime_wasi::ResourceTable,
-}
-
-impl WasiView for MyWasi {
-    fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
-        &mut self.table
-    }
-
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.ctx
-    }
-}
-
-async fn new_store_and_instance(
-    engine: Arc<Engine>,
-    component: Arc<Component>,
-) -> Result<(Store<MyWasi>, wasmtime::component::Instance)> {
-    let mut linker = Linker::new(&engine);
-    let _ = wasmtime_wasi::add_to_linker_async(&mut linker);
-
-    let mut store = Store::new(
-        &engine,
-        MyWasi {
-            ctx: WasiCtx::builder()
-                .inherit_args()
-                .inherit_env()
-                .inherit_stdio()
-                .preopened_dir("/", "/", DirPerms::READ, FilePerms::READ)?
-                .build(),
-            table: wasmtime_wasi::ResourceTable::default(),
-        },
-    );
-    let instance = linker.instantiate_async(&mut store, &component).await?;
-    Ok((store, instance))
-}
 
 pub struct Client {
     transport: ServerStdioTransport,
@@ -174,7 +132,7 @@ impl Client {
                                         .and_then(|v| v.as_str())
                                         .ok_or_else(|| anyhow::anyhow!("Missing 'path' in arguments"))?;
 
-                                    let response = client.load_component(LoadComponentRequest {
+                                    let _response = client.load_component(LoadComponentRequest {
                                         id: id.to_string(),
                                         path: path.to_string(),
                                     }).await?;
@@ -196,7 +154,7 @@ impl Client {
                                         .and_then(|v| v.as_str())
                                         .ok_or_else(|| anyhow::anyhow!("Missing 'id' in arguments"))?;
 
-                                    let response = client.unload_component(UnloadComponentRequest {
+                                    let _response = client.unload_component(UnloadComponentRequest {
                                         id: id.to_string(),
                                     }).await?;
 
@@ -213,7 +171,7 @@ impl Client {
                                 }
                                 _ => {
                                     let arguments_json = req.arguments.clone().unwrap_or(Value::Null);
-                                    let (component_id_opt, new_arguments) = if let Some(obj) = arguments_json.as_object() {
+                                    let (component_id_opt, arguments) = if let Some(obj) = arguments_json.as_object() {
                                         let mut obj_clone = obj.clone();
                                         let comp_id = obj_clone.remove("componentId")
                                             .and_then(|v| v.as_str().map(|s| s.to_string()));
@@ -222,53 +180,24 @@ impl Client {
                                         (None, req.arguments.unwrap_or(Value::Null))
                                     };
 
-                                    let component_response = client.get_component(GetComponentRequest {
-                                        id: component_id_opt.unwrap_or_default(),
-                                    }).await?.into_inner();
+                                    let component_id = component_id_opt
+                                        .ok_or_else(|| anyhow::anyhow!("Component ID not provided"))?;
 
-                                    let schema: Value = serde_json::from_str(&component_response.details)?;
-                                    let tools = schema.get("tools")
-                                        .and_then(|v| v.as_array())
-                                        .ok_or_else(|| anyhow::anyhow!("No tools found in component"))?;
+                                    let response = client.call_component(CallComponentRequest {
+                                        id: component_id,
+                                        parameters: serde_json::to_string(&arguments)?,
+                                        function_name: req.name,
+                                    }).await?;
 
-                                    let tool = tools.iter()
-                                        .find(|t| t.get("name").and_then(|n| n.as_str()) == Some(&req.name))
-                                        .ok_or_else(|| anyhow::anyhow!("Tool not found"))?;
+                                    if !response.get_ref().error.is_empty() {
+                                        return Err(anyhow::anyhow!(response.get_ref().error.clone()));
+                                    }
 
-                                    let mut config = wasmtime::Config::new();
-                                    config.wasm_component_model(true);
-                                    config.async_support(true);
-                                    let engine = Arc::new(Engine::new(&config)?);
-
-                                    // Get the component from the response
-                                    let component = Arc::new(Component::new(
-                                        engine.as_ref(),
-                                        &std::fs::read(&component_response.id)?
-                                    )?);
-
-                                    let (mut store, instance) = new_store_and_instance(
-                                        engine,
-                                        component
-                                    ).await?;
-
-                                    let argument_vals = json_to_vals(&new_arguments)?;
-                                    let output_schema = tool["outputSchema"].clone();
-                                    let mut results = json_to_vals(&output_schema)?;
-
-                                    let export_index = instance
-                                        .get_export(&mut store, None, &req.name)
-                                        .ok_or_else(|| anyhow::anyhow!("Failed to get export '{}'", &req.name))?;
-
-                                    let func = instance
-                                        .get_func(&mut store, &export_index)
-                                        .ok_or_else(|| anyhow::anyhow!("Failed to get function"))?;
-
-                                    func.call_async(&mut store, &argument_vals, &mut results).await?;
-                                    let results = serde_json::to_string_pretty(&vals_to_json(&results))?;
+                                    let result_str = String::from_utf8(response.get_ref().result.clone())?;
 
                                     Ok(CallToolResponse {
                                         content: vec![ToolResponseContent::Text {
-                                            text: results,
+                                            text: result_str,
                                         }],
                                         is_error: None,
                                         meta: None,
@@ -281,28 +210,8 @@ impl Client {
             })
             .build();
 
-        // TODO: this part needs a redesign to figure out how to send notifcations
-        // let notification_task = {
-        //     let transport = self.transport.clone();
-        //     tokio::spawn(async move {
-        //         while let Some(()) = tools_changed_receiver.recv().await {
-        //             tracing::info!("Tools changed, sending notification");
-        //             let notification = JsonRpcNotification {
-        //                 method: "notifications/tools/list_changed".to_string(),
-        //                 ..Default::default()
-        //             };
-        //             let msg = mcp_sdk::transport::JsonRpcMessage::Notification(notification);
-        //             if let Ok(msg_string) = serde_json::to_string(&msg) {
-        //                 tracing::info!("Sending notification: {}", msg_string);
-        //                 let _ = transport.send(&msg);
-        //             }
-        //         }
-        //     })
-        // };
-
         tokio::select! {
             res = server.listen() => { res?; }
-            _ = notification_task => {}
         }
         Ok(())
     }
