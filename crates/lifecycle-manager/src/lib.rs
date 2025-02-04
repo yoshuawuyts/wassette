@@ -1,9 +1,9 @@
-use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use anyhow::{bail, Context, Result};
 use tokio::sync::RwLock;
 use tracing;
-
 use wasmtime::component::Component;
 use wasmtime::Engine;
 

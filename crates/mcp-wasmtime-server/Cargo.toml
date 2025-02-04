@@ -1,0 +1,15 @@
+[package]
+name = "mcp-wasmtime-server"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tonic-build = { version = "0.12", features = ["prost"] }
+
+[dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+mcp-sdk = { workspace = true }
+lifecycle-proto = { workspace = true }
+tonic = { workspace = true }

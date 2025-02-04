@@ -330,8 +330,6 @@ checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
 name = "component2json"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "serde",
  "serde_json",
  "thiserror 2.0.11",
  "wasmtime",
@@ -1273,6 +1271,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lifecycle-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "tonic",
+ "tonic-build",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1356,17 +1363,29 @@ dependencies = [
  "anyhow",
  "component2json",
  "lifecycle-manager",
+ "lifecycle-proto",
  "mcp-sdk 0.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "prost",
- "serde",
+ "mcp-wasmtime-server",
  "serde_json",
  "tokio",
  "tonic",
- "tonic-build",
  "tracing",
  "tracing-subscriber",
  "wasmtime",
  "wasmtime-wasi",
+]
+
+[[package]]
+name = "mcp-wasmtime-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lifecycle-proto",
+ "mcp-sdk 0.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tonic-build",
 ]
 
 [[package]]

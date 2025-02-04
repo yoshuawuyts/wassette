@@ -1,21 +1,20 @@
+use std::sync::Arc;
+
 use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
 use lifecycle_manager::LifecycleManager;
-use std::sync::Arc;
-use tonic::{transport::Server, Request, Response, Status};
-use wasmtime::component::Linker;
-use wasmtime::Store;
-use wasmtime_wasi::WasiCtxBuilder;
-
-pub mod lifecycle {
-    tonic::include_proto!("lifecycle");
-}
-
-use lifecycle::{
-    lifecycle_manager_service_server::{LifecycleManagerService, LifecycleManagerServiceServer},
+use lifecycle_proto::lifecycle::lifecycle_manager_service_server::{
+    LifecycleManagerService, LifecycleManagerServiceServer,
+};
+use lifecycle_proto::lifecycle::{
     CallComponentRequest, CallComponentResponse, GetComponentRequest, GetComponentResponse,
     ListComponentsRequest, ListComponentsResponse, LoadComponentRequest, LoadComponentResponse,
     UnloadComponentRequest, UnloadComponentResponse,
 };
+use tonic::transport::Server;
+use tonic::{Request, Response, Status};
+use wasmtime::component::Linker;
+use wasmtime::Store;
+use wasmtime_wasi::WasiCtxBuilder;
 
 struct WasiState {
     ctx: wasmtime_wasi::WasiCtx,
@@ -67,7 +66,7 @@ impl LifecycleManagerServiceImpl {
             .ok_or_else(|| anyhow::anyhow!("Function not found: {}", function_name))?;
 
         let func = instance
-            .get_func(&mut store, &export)
+            .get_func(&mut store, export)
             .ok_or_else(|| anyhow::anyhow!("Export is not a function: {}", function_name))?;
 
         let schema =
