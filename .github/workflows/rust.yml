@@ -15,6 +15,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - run: ./scripts/install-protobuf.sh
+      shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         components: rustfmt, clippy
@@ -30,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - run: ./scripts/install-protobuf.sh
+      shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Build
       run: cargo build --verbose --workspace
