@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use wasmtime::{component::Component, Config, Engine};
+use wasmtime::component::Component;
+use wasmtime::{Config, Engine};
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -435,9 +435,10 @@ fn val_to_json(val: &Val) -> Value {
 mod tests {
     use std::collections::HashMap;
 
-    use super::*;
     use serde_json::json;
     use wasmtime::component::Val;
+
+    use super::*;
 
     #[test]
     fn test_json_to_val_null() {

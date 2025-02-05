@@ -1,0 +1,10 @@
+[package]
+name = "lifecycle-manager"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasmtime = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

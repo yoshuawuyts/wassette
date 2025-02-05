@@ -1,0 +1,15 @@
+[package]
+name = "lifecycle-proto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tonic = { workspace = true }
+prost = "0.13"
+
+[build-dependencies]
+tonic-build = { version = "0.12", features = ["prost"] }
+
+[package.metadata.cargo-machete]
+# used as part of a derive macro
+ignored = ["prost"]

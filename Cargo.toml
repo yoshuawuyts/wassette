@@ -3,7 +3,10 @@ name = "mcp-wasmtime"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
+[workspace]
+members = ["crates/*"]
+
+[workspace.dependencies]
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -13,22 +16,43 @@ tracing = "0.1"
 mcp-sdk = "0.0.3"
 wasmtime = "29.0.1"
 wasmtime-wasi = "29.0.1"
+wasmtime-wasi-http = "29.0.1"
 component2json = { path = "crates/component2json" }
+lifecycle-manager = { path = "crates/lifecycle-manager" }
+lifecycle-proto = { path = "crates/lifecycle-proto" }
+mcp-wasmtime-server = { path = "crates/mcp-wasmtime-server"  }
+tonic = { version = "0.12", features = ["transport", "codegen", "prost"] }
+prost = "0.13"
+
+
+[dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing = { workspace = true }
+mcp-sdk = { workspace = true }
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+component2json = { workspace = true }
+lifecycle-manager = { workspace = true }
+mcp-wasmtime-server = { workspace = true }
+lifecycle-proto = { workspace = true }
+tonic = { workspace = true }
+wasmtime-wasi-http = { workspace = true }
 
 [[bin]]
 name = "mcp-wasmtime"
 path = "src/main.rs"
 
 [[bin]]
-name = "inspect"
-path = "cmd/main.rs"
+name = "wasmtimed"
+path = "src/wasmtimed.rs"
 
 [[bin]]
 name = "component2json"
 path = "cmd/component2json.rs"
 
-[workspace]
-members = [
-    "mcp-wasmtime",
-    "crates/component2json",
-]
+[[bin]]
+name = "fetch-runtime"
+path = "cmd/fetch-runtime.rs"
