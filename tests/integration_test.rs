@@ -13,7 +13,7 @@ use tonic::transport::Channel;
 
 async fn setup_daemon() -> Result<()> {
     let addr = "[::1]:50051";
-    let daemon = wasmtimed::WasmtimeD::new_with_db_url(addr.to_string(), "sqlite::memory:").await?;
+    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), "sqlite::memory:").await?;
 
     tokio::spawn(async move {
         if let Err(e) = daemon.serve().await {

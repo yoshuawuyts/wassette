@@ -46,10 +46,6 @@ name = "mcp-wasmtime"
 path = "src/main.rs"
 
 [[bin]]
-name = "wasmtimed"
-path = "src/wasmtimed.rs"
-
-[[bin]]
 name = "component2json"
 path = "cmd/component2json.rs"
 

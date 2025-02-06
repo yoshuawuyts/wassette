@@ -1,4 +1,3 @@
-use std::env;
 use std::sync::Arc;
 
 use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
@@ -210,13 +209,7 @@ pub struct WasmtimeD {
 }
 
 impl WasmtimeD {
-    pub async fn new(addr: String) -> anyhow::Result<Self> {
-        let db_path =
-            env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:components.db".to_string());
-        Self::new_with_db_url(addr, &db_path).await
-    }
-
-    pub async fn new_with_db_url(addr: String, db_url: &str) -> anyhow::Result<Self> {
+    pub async fn new(addr: String, db_url: &str) -> anyhow::Result<Self> {
         let mut config = wasmtime::Config::new();
         config.wasm_component_model(true);
         config.async_support(true);
@@ -240,14 +233,4 @@ impl WasmtimeD {
             .await?;
         Ok(())
     }
-}
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
-
-    let daemon = WasmtimeD::new("[::1]:50051".to_string()).await?;
-    daemon.serve().await
 }
