@@ -209,18 +209,22 @@ pub struct WasmtimeD {
 }
 
 impl WasmtimeD {
-    pub async fn new(addr: String) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(addr: String) -> anyhow::Result<Self> {
+        Self::new_with_db_url(addr, "sqlite:components.db").await
+    }
+
+    pub async fn new_with_db_url(addr: String, db_url: &str) -> anyhow::Result<Self> {
         let mut config = wasmtime::Config::new();
         config.wasm_component_model(true);
         config.async_support(true);
         let engine = Arc::new(wasmtime::Engine::new(&config)?);
 
-        let manager = Arc::new(LifecycleManager::new(engine).await?);
+        let manager = Arc::new(LifecycleManager::new_with_db_url(engine, db_url).await?);
 
         Ok(Self { addr, manager })
     }
 
-    pub async fn serve(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn serve(self) -> anyhow::Result<()> {
         let addr = self.addr.parse()?;
         let svc = LifecycleManagerServiceImpl {
             manager: self.manager,
@@ -236,7 +240,7 @@ impl WasmtimeD {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();

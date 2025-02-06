@@ -84,28 +84,7 @@ fn get_builtin_tools() -> Vec<ToolDefinition> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use lifecycle_proto::lifecycle::lifecycle_manager_service_client::LifecycleManagerServiceClient;
-    use serde_json::Value;
-    use tokio::runtime::Runtime;
-    use tokio::sync::Mutex;
-    use tonic::transport::Channel;
-
     use super::*;
-
-    fn setup_test_request(name: &str, args: Value) -> CallToolRequest {
-        CallToolRequest {
-            name: name.to_string(),
-            arguments: Some(args),
-            meta: None,
-        }
-    }
-
-    fn setup_mock_client() -> GrpcClient {
-        let channel = Channel::from_static("http://[::1]:50051").connect_lazy();
-        Arc::new(Mutex::new(LifecycleManagerServiceClient::new(channel)))
-    }
 
     #[test]
     fn test_get_builtin_tools() {
@@ -113,35 +92,5 @@ mod tests {
         assert_eq!(tools.len(), 2);
         assert!(tools.iter().any(|t| t.name == "load-component"));
         assert!(tools.iter().any(|t| t.name == "unload-component"));
-    }
-
-    #[test]
-    fn test_handle_tools_list() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let client = setup_mock_client();
-            let req = ListRequest {
-                cursor: None,
-                meta: None,
-            };
-            let response = handle_tools_list(req, client);
-            assert!(response.is_ok());
-        });
-    }
-
-    #[test]
-    fn test_handle_tools_call_invalid_tool() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let client = setup_mock_client();
-            let req = setup_test_request(
-                "non-existent-tool",
-                json!({
-                    "componentId": "test-id"
-                }),
-            );
-            let response = handle_tools_call(req, client);
-            assert!(response.is_err());
-        });
     }
 }

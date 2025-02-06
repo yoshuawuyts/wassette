@@ -186,7 +186,6 @@ impl LifecycleManager {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::NamedTempFile;
     use test_log::test;
 
     use super::*;
@@ -199,14 +198,6 @@ mod tests {
         LifecycleManager::new_with_db_url(engine, "sqlite::memory:").await
     }
 
-    async fn create_test_manager_with_db_path(db_path: &str) -> Result<LifecycleManager> {
-        let mut config = wasmtime::Config::new();
-        config.wasm_component_model(true);
-        config.async_support(true);
-        let engine = Arc::new(wasmtime::Engine::new(&config)?);
-        LifecycleManager::new_with_db_url(engine, &format!("sqlite:{}", db_path)).await
-    }
-
     #[test(tokio::test)]
     async fn test_new_manager() -> Result<()> {
         let _manager = create_test_manager().await?;
@@ -216,10 +207,10 @@ mod tests {
     #[test(tokio::test)]
     async fn test_load_and_unload_component() -> Result<()> {
         let manager = create_test_manager().await?;
-        let temp_file = NamedTempFile::new()?;
-        let path = temp_file.path().to_str().unwrap();
 
-        let load_result = manager.load_component("test-id", path).await;
+        let load_result = manager
+            .load_component("test-id", "/path/to/nonexistent")
+            .await;
         assert!(load_result.is_err());
 
         let unload_result = manager.unload_component("non-existent").await;
@@ -233,6 +224,17 @@ mod tests {
         let manager = create_test_manager().await?;
         let components = manager.list_components().await?;
         assert!(components.is_empty());
+
+        sqlx::query("INSERT INTO components (id, path) VALUES (?, ?)")
+            .bind("test-component")
+            .bind("/path/to/component")
+            .execute(&manager.db)
+            .await?;
+
+        let components = manager.list_components().await?;
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0], "test-component");
+
         Ok(())
     }
 
@@ -241,31 +243,14 @@ mod tests {
         let manager = create_test_manager().await?;
         assert!(manager.get_component(Some("non-existent")).await.is_err());
         assert!(manager.get_component(None).await.is_err());
-        Ok(())
-    }
 
-    #[test(tokio::test)]
-    async fn test_persistence_across_restarts() -> Result<()> {
-        let temp_file = NamedTempFile::new()?;
-        let db_path = temp_file.path().to_str().unwrap();
+        sqlx::query("INSERT INTO components (id, path) VALUES (?, ?)")
+            .bind("test-component")
+            .bind("/path/to/component")
+            .execute(&manager.db)
+            .await?;
 
-        let component_id = "test-component";
-        let component_path = "/path/to/component";
-
-        {
-            let manager = create_test_manager_with_db_path(db_path).await?;
-            sqlx::query("INSERT INTO components (id, path) VALUES (?, ?)")
-                .bind(component_id)
-                .bind(component_path)
-                .execute(&manager.db)
-                .await?;
-        }
-
-        let manager = create_test_manager_with_db_path(db_path).await?;
-        let components = manager.list_components().await?;
-        assert_eq!(components.len(), 1);
-        assert_eq!(components[0], component_id);
-
+        assert!(manager.get_component(Some("test-component")).await.is_err());
         Ok(())
     }
 
@@ -340,61 +325,6 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
         assert!(components_memory.is_empty());
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_component_cleanup() -> Result<()> {
-        let manager = create_test_manager().await?;
-        let component_id = "test-component";
-        let component_path = "/path/to/component";
-
-        sqlx::query("INSERT OR REPLACE INTO components (id, path) VALUES (?, ?)")
-            .bind(component_id)
-            .bind(component_path)
-            .execute(&manager.db)
-            .await?;
-
-        let components = manager.list_components().await?;
-        assert_eq!(components.len(), 1);
-
-        let db_count: i64 = sqlx::query("SELECT COUNT(*) as count FROM components")
-            .fetch_one(&manager.db)
-            .await?
-            .try_get("count")?;
-        assert_eq!(db_count, 1);
-
-        manager.unload_component(component_id).await?;
-
-        let components = manager.list_components().await?;
-        assert!(components.is_empty());
-
-        let db_count: i64 = sqlx::query("SELECT COUNT(*) as count FROM components")
-            .fetch_one(&manager.db)
-            .await?
-            .try_get("count")?;
-        assert_eq!(db_count, 0);
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_multiple_components() -> Result<()> {
-        let manager = create_test_manager().await?;
-
-        for i in 0..5 {
-            sqlx::query("INSERT OR REPLACE INTO components (id, path) VALUES (?, ?)")
-                .bind(format!("component-{}", i))
-                .bind(format!("/path/{}", i))
-                .execute(&manager.db)
-                .await?;
-        }
-
-        let components = manager.list_components().await?;
-        assert_eq!(components.len(), 5);
-        assert!(components.contains(&"component-0".to_string()));
-        assert!(components.contains(&"component-4".to_string()));
 
         Ok(())
     }

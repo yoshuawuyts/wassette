@@ -1,60 +1,29 @@
-use std::process::{Child, Command};
+use std::env;
 use std::time::Duration;
-use std::{env, fs};
 
 use anyhow::Result;
 use lifecycle_proto::lifecycle::lifecycle_manager_service_client::LifecycleManagerServiceClient;
 use lifecycle_proto::lifecycle::{
     CallComponentRequest, GetComponentRequest, ListComponentsRequest, LoadComponentRequest,
 };
-use tempfile::TempDir;
+use mcp_wasmtime::wasmtimed;
 use test_log::test;
 use tokio::time::sleep;
 use tonic::transport::Channel;
 
-struct WasmtimedProcess {
-    child: Child,
-    _temp_dir: TempDir,
-}
+async fn setup_daemon() -> Result<()> {
+    let addr = "[::1]:50051";
+    let daemon = wasmtimed::WasmtimeD::new_with_db_url(addr.to_string(), "sqlite::memory:").await?;
 
-impl Drop for WasmtimedProcess {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-    }
-}
+    tokio::spawn(async move {
+        if let Err(e) = daemon.serve().await {
+            tracing::error!("Daemon error: {}", e);
+        }
+    });
 
-async fn start_wasmtimed() -> Result<WasmtimedProcess> {
-    // Kill any existing wasmtimed processes
-    let _ = Command::new("pkill").args(["-f", "wasmtimed"]).status();
-
-    let cwd = env::current_dir()?;
-    let fetch_rs_dir = cwd.join("examples/fetch-rs");
-
-    let status = Command::new("cargo")
-        .current_dir(&fetch_rs_dir)
-        .args(["component", "build", "--release"])
-        .status()
-        .expect("Failed to compile fetch-rs component");
-
-    if !status.success() {
-        anyhow::bail!("Failed to compile fetch-rs component");
-    }
-
-    let temp_dir = TempDir::new_in(".")?;
-    let db_path = temp_dir.path().join("components.db");
-    fs::write(&db_path, "")?;
-
-    let child = Command::new(env!("CARGO_BIN_EXE_wasmtimed"))
-        .current_dir(temp_dir.path())
-        .env("DATABASE_URL", "sqlite:components.db")
-        .env("RUST_LOG", "debug")
-        .spawn()
-        .expect("Failed to start wasmtimed");
+    // Wait for the daemon to start
     sleep(Duration::from_secs(1)).await;
-    Ok(WasmtimedProcess {
-        child,
-        _temp_dir: temp_dir,
-    })
+    Ok(())
 }
 
 async fn create_client() -> Result<LifecycleManagerServiceClient<Channel>> {
@@ -64,7 +33,7 @@ async fn create_client() -> Result<LifecycleManagerServiceClient<Channel>> {
 
 #[test(tokio::test)]
 async fn test_fetch_component_workflow() -> Result<()> {
-    let _wasmtimed = start_wasmtimed().await?;
+    setup_daemon().await?;
     let mut client = create_client().await?;
 
     let list_request = tonic::Request::new(ListComponentsRequest {});
@@ -74,6 +43,17 @@ async fn test_fetch_component_workflow() -> Result<()> {
 
     let cwd = env::current_dir()?;
     let component_path = cwd.join("examples/fetch-rs/target/wasm32-wasip1/release/fetch_rs.wasm");
+
+    let status = std::process::Command::new("cargo")
+        .current_dir(cwd.join("examples/fetch-rs"))
+        .args(["component", "build", "--release"])
+        .status()
+        .expect("Failed to compile fetch-rs component");
+
+    if !status.success() {
+        anyhow::bail!("Failed to compile fetch-rs component");
+    }
+
     let load_request = tonic::Request::new(LoadComponentRequest {
         id: "fetch".to_string(),
         path: component_path.to_str().unwrap().to_string(),
@@ -108,7 +88,6 @@ async fn test_fetch_component_workflow() -> Result<()> {
     assert!(result.error.is_empty());
 
     let response_body = String::from_utf8(result.result).expect("Invalid UTF-8 in response");
-    println!("Response body: {}", response_body);
     assert!(response_body.contains("Example Domain"));
     assert!(response_body.contains("This domain is for use in illustrative examples in documents"));
 
