@@ -68,8 +68,11 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
+    let database_path =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:components.db".to_string());
+
     let addr = "[::1]:50051";
-    let daemon = wasmtimed::WasmtimeD::new(addr.to_string()).await?;
+    let daemon = wasmtimed::WasmtimeD::new_with_db_url(addr.to_string(), &database_path).await?;
 
     tokio::spawn(async move {
         if let Err(e) = daemon.serve().await {

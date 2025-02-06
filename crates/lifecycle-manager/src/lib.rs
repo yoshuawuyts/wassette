@@ -23,7 +23,7 @@ impl LifecycleManager {
 
     #[instrument(skip(engine))]
     pub async fn new_with_db_url(engine: Arc<Engine>, db_url: &str) -> Result<Self> {
-        debug!("Creating new LifecycleManager");
+        info!("Creating new LifecycleManager");
         let db = SqlitePool::connect(db_url)
             .await
             .context("Failed to connect to SQLite database")?;
