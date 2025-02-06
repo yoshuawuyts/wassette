@@ -7,9 +7,13 @@ edition = "2021"
 tonic-build = { version = "0.12", features = ["prost"] }
 
 [dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["full", "test-util"] }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 mcp-sdk = { workspace = true }
 lifecycle-proto = { workspace = true }
 tonic = { workspace = true }
+tracing = { version = "0.1", features = ["attributes"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
