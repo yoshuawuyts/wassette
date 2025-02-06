@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package lifecycle;
+
+// Request and response for loading a component.
+message LoadComponentRequest {
+  string id = 1;
+  string path = 2;
+}
+
+message LoadComponentResponse {
+  string status = 1; // e.g. "component loaded"
+}
+
+// Request and response for unloading a component.
+message UnloadComponentRequest {
+  string id = 1;
+}
+
+message UnloadComponentResponse {
+  string status = 1; // e.g. "component unloaded"
+}
+
+// Request and response for getting a component.
+message GetComponentRequest {
+  string id = 1; // if empty, imply that the only component should be returned
+}
+
+message GetComponentResponse {
+  string id = 1;
+  string details = 2; // Additional details about the component.
+}
+
+message ListComponentsRequest {}
+
+message ListComponentsResponse {
+  repeated string ids = 1;
+}
+
+// Request and response for calling a component.
+message CallComponentRequest {
+  string id = 1;
+  string parameters = 2;
+  string function_name = 3;
+}
+
+message CallComponentResponse {
+  bytes result = 1;
+  string error = 2;
+}
+
+// Service definition for lifecycle management.
+service LifecycleManagerService {
+  rpc LoadComponent(LoadComponentRequest) returns (LoadComponentResponse);
+  rpc UnloadComponent(UnloadComponentRequest) returns (UnloadComponentResponse);
+  rpc GetComponent(GetComponentRequest) returns (GetComponentResponse);
+  rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
+  rpc CallComponent(CallComponentRequest) returns (CallComponentResponse);
+}

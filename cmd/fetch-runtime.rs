@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
     match &results[0] {
         Val::Result(Ok(ok)) => {
             if let Some(s) = ok.as_ref() {
-                println!("Result: {}", format!("{:?}", s));
+                println!("Result: {:?}", s);
             }
         }
         Val::Result(Err(err)) => {

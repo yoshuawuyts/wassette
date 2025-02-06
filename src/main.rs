@@ -11,6 +11,8 @@ use mcp_wasmtime_server::{
 use serde_json::json;
 use tonic::transport::Channel;
 
+mod wasmtimed;
+
 type GrpcClient = Arc<tokio::sync::Mutex<LifecycleManagerServiceClient<Channel>>>;
 
 pub struct Client {
@@ -19,7 +21,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn new(grpc_addr: String) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(grpc_addr: String) -> Result<Self> {
         let grpc_client =
             LifecycleManagerServiceClient::connect(format!("http://{}", grpc_addr)).await?;
         Ok(Self {
@@ -28,7 +30,7 @@ impl Client {
         })
     }
 
-    pub async fn serve(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn serve(self) -> Result<()> {
         let server = self.build_server();
         tokio::select! {
             res = server.listen() => { res?; }
@@ -60,12 +62,24 @@ impl Client {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .with_writer(std::io::stderr)
         .init();
 
-    let client = Client::new("[::1]:50051".to_string()).await?;
+    let database_path =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:components.db".to_string());
+
+    let addr = "[::1]:50051";
+    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), &database_path).await?;
+
+    tokio::spawn(async move {
+        if let Err(e) = daemon.serve().await {
+            tracing::error!("Daemon error: {}", e);
+        }
+    });
+
+    let client = Client::new(addr.to_string()).await?;
     client.serve().await
 }

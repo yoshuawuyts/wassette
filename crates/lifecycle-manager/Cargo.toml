@@ -6,5 +6,13 @@ edition = "2021"
 [dependencies]
 wasmtime = { workspace = true }
 anyhow = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
+tokio = { workspace = true, features = ["full", "test-util"] }
+tracing = { version = "0.1", features = ["attributes"] }
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "migrate"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.8"
+tracing-test = "0.2"
+test-log = { version = "0.2", features = ["trace"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
