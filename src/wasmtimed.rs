@@ -32,6 +32,7 @@ impl wasmtime_wasi::WasiView for WasiState {
         &mut self.ctx
     }
 }
+
 impl WasiHttpView for WasiState {
     fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
         &mut self.table
@@ -166,7 +167,11 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         &self,
         _request: Request<ListComponentsRequest>,
     ) -> Result<Response<ListComponentsResponse>, Status> {
-        let ids = self.manager.list_components().await;
+        let ids = self
+            .manager
+            .list_components()
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
         Ok(Response::new(ListComponentsResponse { ids }))
     }
 
@@ -204,13 +209,13 @@ pub struct WasmtimeD {
 }
 
 impl WasmtimeD {
-    pub fn new(addr: String) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(addr: String) -> Result<Self, Box<dyn std::error::Error>> {
         let mut config = wasmtime::Config::new();
         config.wasm_component_model(true);
         config.async_support(true);
         let engine = Arc::new(wasmtime::Engine::new(&config)?);
 
-        let manager = Arc::new(LifecycleManager::new(engine));
+        let manager = Arc::new(LifecycleManager::new(engine).await?);
 
         Ok(Self { addr, manager })
     }
@@ -236,6 +241,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let daemon = WasmtimeD::new("[::1]:50051".to_string())?;
+    let daemon = WasmtimeD::new("[::1]:50051".to_string()).await?;
     daemon.serve().await
 }
