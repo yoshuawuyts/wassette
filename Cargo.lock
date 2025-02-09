@@ -1647,6 +1647,8 @@ name = "lifecycle-manager"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "component2json",
+ "serde_json",
  "sqlx",
  "tempfile",
  "test-log",

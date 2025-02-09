@@ -79,7 +79,6 @@ async fn test_fetch_component_workflow() -> Result<()> {
         .any(|t| t["name"] == "fetch"));
 
     let call_request = tonic::Request::new(CallComponentRequest {
-        id: "fetch".to_string(),
         function_name: "fetch".to_string(),
         parameters: r#"{"url": "https://example.com/"}"#.to_string(),
     });
@@ -90,6 +89,32 @@ async fn test_fetch_component_workflow() -> Result<()> {
     let response_body = String::from_utf8(result.result).expect("Invalid UTF-8 in response");
     assert!(response_body.contains("Example Domain"));
     assert!(response_body.contains("This domain is for use in illustrative examples in documents"));
+
+    let load_request1 = tonic::Request::new(LoadComponentRequest {
+        id: "fetch1".to_string(),
+        path: component_path.to_str().unwrap().to_string(),
+    });
+    client.load_component(load_request1).await?;
+
+    let load_request2 = tonic::Request::new(LoadComponentRequest {
+        id: "fetch2".to_string(),
+        path: component_path.to_str().unwrap().to_string(),
+    });
+    client.load_component(load_request2).await?;
+
+    let call_request = tonic::Request::new(CallComponentRequest {
+        function_name: "fetch".to_string(),
+        parameters: r#"{"url": "https://example.com/"}"#.to_string(),
+    });
+    let call_result = client.call_component(call_request).await;
+
+    assert!(call_result.is_err());
+    let error = call_result.unwrap_err();
+    assert!(error
+        .message()
+        .contains("Multiple components found for tool 'fetch'"));
+    assert!(error.message().contains("fetch1"));
+    assert!(error.message().contains("fetch2"));
 
     Ok(())
 }

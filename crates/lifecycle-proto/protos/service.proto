@@ -39,9 +39,8 @@ message ListComponentsResponse {
 
 // Request and response for calling a component.
 message CallComponentRequest {
-  string id = 1;
-  string parameters = 2;
-  string function_name = 3;
+  string parameters = 1;
+  string function_name = 2;
 }
 
 message CallComponentResponse {

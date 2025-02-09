@@ -113,15 +113,11 @@ pub(crate) async fn handle_component_call(
     req: &CallToolRequest,
     client: &mut LifecycleManagerServiceClient<Channel>,
 ) -> Result<CallToolResponse> {
-    let (component_id, arguments) = extract_component_id_and_args(req)?;
-    info!(
-        "Calling component {} with function {}",
-        component_id, req.name
-    );
+    let arguments = req.arguments.clone().unwrap_or(Value::Null);
+    info!("Calling function {}", req.name);
 
     let response = client
         .call_component(CallComponentRequest {
-            id: component_id.clone(),
             parameters: serde_json::to_string(&arguments)?,
             function_name: req.name.clone(),
         })
@@ -153,9 +149,8 @@ fn parse_tool_schema(tool_json: &Value) -> Option<ToolDefinition> {
         .get("description")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let mut input_schema = tool_json.get("inputSchema").cloned().unwrap_or(json!({}));
+    let input_schema = tool_json.get("inputSchema").cloned().unwrap_or(json!({}));
 
-    add_component_id(&mut input_schema);
     debug!("Parsed tool schema for {}", name);
 
     Some(ToolDefinition {
@@ -163,50 +158,6 @@ fn parse_tool_schema(tool_json: &Value) -> Option<ToolDefinition> {
         description,
         input_schema,
     })
-}
-
-#[instrument]
-fn extract_component_id_and_args(req: &CallToolRequest) -> Result<(String, Value)> {
-    let arguments_json = req.arguments.clone().unwrap_or(Value::Null);
-    let (component_id, arguments) = if let Some(obj) = arguments_json.as_object() {
-        let mut obj_clone = obj.clone();
-        let comp_id = obj_clone.remove("componentId")
-            .or_else(|| obj_clone.remove("id"))
-            .and_then(|v| v.as_str().map(|s| s.to_string()))
-            .ok_or_else(|| anyhow::anyhow!("Component ID not provided. Please provide 'componentId' or 'id' in the arguments"))?;
-        (comp_id, Value::Object(obj_clone))
-    } else {
-        return Err(anyhow::anyhow!(
-            "Arguments must be an object containing 'componentId' or 'id'"
-        ));
-    };
-    debug!("Extracted component ID: {}", component_id);
-    Ok((component_id, arguments))
-}
-
-#[instrument]
-fn add_component_id(input_schema: &mut Value) {
-    if let Some(map) = input_schema.as_object_mut() {
-        if !map.contains_key("properties") {
-            map.insert("properties".to_string(), json!({}));
-        }
-
-        if let Some(props) = map.get_mut("properties").and_then(|v| v.as_object_mut()) {
-            props.insert("componentId".to_string(), json!({"type": "string"}));
-        }
-
-        if !map.contains_key("required") {
-            map.insert("required".to_string(), json!([]));
-        }
-
-        if let Some(required) = map.get_mut("required").and_then(|v| v.as_array_mut()) {
-            if !required.contains(&json!("componentId")) {
-                required.push(json!("componentId"));
-            }
-        }
-
-        map.insert("type".to_string(), json!("object"));
-    }
 }
 
 #[cfg(test)]
@@ -236,69 +187,16 @@ mod tests {
 
         let tool = parse_tool_schema(&tool_json).unwrap();
 
+        assert_eq!(tool.name, "test-tool");
+        assert_eq!(tool.description, Some("Test tool description".to_string()));
         assert_eq!(
             tool.input_schema,
             json!({
                 "type": "object",
                 "properties": {
-                    "test": {"type": "string"},
-                    "componentId": {"type": "string"}
-                },
-                "required": ["componentId"]
+                    "test": {"type": "string"}
+                }
             })
-        )
-    }
-
-    #[test]
-    fn test_extract_component_id_and_args() {
-        let req = setup_test_request(
-            "test-function",
-            json!({
-                "componentId": "test-id",
-                "param1": "value1"
-            }),
         );
-
-        let (id, args) = extract_component_id_and_args(&req).unwrap();
-        assert_eq!(id, "test-id");
-        assert_eq!(args.get("param1").unwrap(), "value1");
-        assert!(args.get("componentId").is_none());
-    }
-
-    #[test]
-    #[should_panic(expected = "Component ID not provided")]
-    fn test_extract_component_id_missing() {
-        let req = setup_test_request(
-            "test-function",
-            json!({
-                "param1": "value1"
-            }),
-        );
-        extract_component_id_and_args(&req).unwrap();
-    }
-
-    #[test]
-    fn test_add_component_id() {
-        let mut schema = json!({
-            "type": "object",
-            "properties": {
-                "test": {"type": "string"}
-            },
-            "required": ["test"]
-        });
-
-        add_component_id(&mut schema);
-
-        assert_eq!(
-            schema,
-            json!({
-                "type": "object",
-                "properties": {
-                    "test": {"type": "string"},
-                    "componentId": {"type": "string"}
-                },
-                "required": ["test", "componentId"]
-            })
-        )
     }
 }
