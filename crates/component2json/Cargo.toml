@@ -2,6 +2,8 @@
 name = "component2json"
 version = "0.1.0"
 edition = "2021"
+description = "A library for converting WebAssembly Interface Types (WIT) to JSON Schema and back"
+license = "MIT"
 
 [dependencies]
 serde_json = "1.0"
