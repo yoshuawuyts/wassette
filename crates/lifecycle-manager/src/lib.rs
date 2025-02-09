@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use sqlx::{Pool, Row, Sqlite, SqlitePool};
 use tokio::sync::RwLock;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 use wasmtime::component::Component;
 use wasmtime::Engine;
 
@@ -173,8 +173,26 @@ impl LifecycleManager {
     #[instrument(skip(self))]
     pub async fn load_component(&self, id: &str, path: &str) -> Result<()> {
         debug!("Loading component from path");
-        let component = Component::from_file(&self.engine, path)
-            .with_context(|| format!("Failed to load component from path: {}", path))?;
+
+        // Validate path exists
+        if !std::path::Path::new(path).exists() {
+            error!("Component path does not exist: {}", path);
+            bail!("Component path does not exist: {}. Please provide a valid path to a WebAssembly component file.", path);
+        }
+
+        // Validate file extension
+        if !path.ends_with(".wasm") {
+            error!("Invalid file extension for component: {}", path);
+            bail!("Invalid file extension for component: {}. Component file must have .wasm extension.", path);
+        }
+
+        let component = match Component::from_file(&self.engine, path) {
+            Ok(comp) => comp,
+            Err(e) => {
+                error!("Failed to load component from path {}: {}", path, e);
+                bail!("Failed to load component from path: {}. Error: {}. Please ensure the file is a valid WebAssembly component.", path, e);
+            }
+        };
 
         let schema =
             component2json::component_exports_to_json_schema(&component, &self.engine, true);
@@ -190,9 +208,9 @@ impl LifecycleManager {
             .await
             .context("Failed to store component in database")?;
 
-        let tools = schema["tools"]
-            .as_array()
-            .context("Schema does not contain tools array")?;
+        let tools = schema["tools"].as_array().context(
+            "Schema does not contain tools array. Please ensure the component exports valid tools.",
+        )?;
 
         sqlx::query("DELETE FROM tools WHERE component_id = ?")
             .bind(id)
@@ -203,7 +221,7 @@ impl LifecycleManager {
         for tool in tools {
             let name = tool["name"]
                 .as_str()
-                .context("Tool name is not a string")?
+                .context("Tool name is not a string. Please ensure tool names are valid strings.")?
                 .to_string();
 
             sqlx::query("INSERT INTO tools (tool_name, component_id, schema) VALUES (?, ?, ?)")
@@ -229,7 +247,10 @@ impl LifecycleManager {
             .await
             .insert(id.to_string(), arc_component);
 
-        info!("Loaded component '{}' from path '{}'", id, path);
+        info!(
+            "Successfully loaded component '{}' from path '{}'",
+            id, path
+        );
         Ok(())
     }
 
@@ -354,7 +375,6 @@ impl LifecycleManager {
                     debug!("Found single component in database with id: {}", id);
                     self.load_from_db(&id).await
                 } else {
-                    warn!("Multiple components found, but no specific id provided");
                     bail!("Multiple components loaded. Please specify component id.")
                 }
             }
@@ -385,12 +405,10 @@ impl LifecycleManager {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
 
     use serde_json::json;
-    use tempfile::TempDir;
     use test_log::test;
 
     use super::*;
