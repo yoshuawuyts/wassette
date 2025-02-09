@@ -181,9 +181,20 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
     ) -> Result<Response<CallComponentResponse>, Status> {
         let req = request.into_inner();
 
+        let component_id = self
+            .manager
+            .get_component_id_for_tool(&req.function_name)
+            .await
+            .map_err(|e| {
+                Status::not_found(format!(
+                    "Failed to find component for tool '{}': {}",
+                    req.function_name, e
+                ))
+            })?;
+
         let component = self
             .manager
-            .get_component(Some(&req.id))
+            .get_component(Some(&component_id))
             .await
             .map_err(|e| Status::not_found(e.to_string()))?;
 
