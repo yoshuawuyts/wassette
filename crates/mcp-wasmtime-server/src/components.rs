@@ -54,30 +54,41 @@ pub(crate) async fn handle_load_component(
     let id = args
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Missing 'id' in arguments"))?;
+        .ok_or_else(|| anyhow::anyhow!("Missing required argument: 'id'"))?;
     let path = args
         .get("path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Missing 'path' in arguments"))?;
+        .ok_or_else(|| anyhow::anyhow!("Missing required argument: 'path'"))?;
 
     info!("Loading component {} from path {}", id, path);
-    let _response = client
+
+    let response = client
         .load_component(LoadComponentRequest {
             id: id.to_string(),
             path: path.to_string(),
         })
-        .await?;
+        .await;
 
-    Ok(CallToolResponse {
-        content: vec![ToolResponseContent::Text {
-            text: serde_json::to_string(&json!({
-                "status": "component loaded",
-                "id": id
-            }))?,
-        }],
-        is_error: None,
-        meta: None,
-    })
+    match response {
+        Ok(_) => Ok(CallToolResponse {
+            content: vec![ToolResponseContent::Text {
+                text: serde_json::to_string(&json!({
+                    "status": "component loaded",
+                    "id": id
+                }))?,
+            }],
+            is_error: None,
+            meta: None,
+        }),
+        Err(e) => {
+            error!("Failed to load component: {}", e);
+            Err(anyhow::anyhow!(
+                "Failed to load component: {}. Error: {}",
+                path,
+                e
+            ))
+        }
+    }
 }
 
 #[instrument(skip(client))]
@@ -163,14 +174,6 @@ fn parse_tool_schema(tool_json: &Value) -> Option<ToolDefinition> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn setup_test_request(name: &str, args: Value) -> CallToolRequest {
-        CallToolRequest {
-            name: name.to_string(),
-            arguments: Some(args),
-            meta: None,
-        }
-    }
 
     #[test]
     fn test_parse_tool_schema() {

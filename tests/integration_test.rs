@@ -1,19 +1,53 @@
 use std::env;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use lifecycle_proto::lifecycle::lifecycle_manager_service_client::LifecycleManagerServiceClient;
 use lifecycle_proto::lifecycle::{
     CallComponentRequest, GetComponentRequest, ListComponentsRequest, LoadComponentRequest,
+    UnloadComponentRequest,
 };
 use mcp_wasmtime::wasmtimed;
 use test_log::test;
 use tokio::time::sleep;
 use tonic::transport::Channel;
 
-async fn setup_daemon() -> Result<()> {
+async fn wait_for_client() -> Result<LifecycleManagerServiceClient<Channel>> {
+    let mut retries = 5;
+    let mut last_error = None;
+
+    while retries > 0 {
+        match Channel::from_static("http://[::1]:50051").connect().await {
+            Ok(channel) => return Ok(LifecycleManagerServiceClient::new(channel)),
+            Err(e) => {
+                last_error = Some(e);
+                retries -= 1;
+                if retries > 0 {
+                    sleep(Duration::from_millis(200)).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap().into())
+}
+
+async fn cleanup_components(client: &mut LifecycleManagerServiceClient<Channel>) -> Result<()> {
+    let list_response = client.list_components(ListComponentsRequest {}).await?;
+    for id in list_response.into_inner().ids {
+        client
+            .unload_component(UnloadComponentRequest { id: id.clone() })
+            .await
+            .with_context(|| format!("Failed to unload component {}", id))?;
+    }
+    Ok(())
+}
+
+async fn setup_daemon() -> Result<LifecycleManagerServiceClient<Channel>> {
     let addr = "[::1]:50051";
-    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), "sqlite::memory:").await?;
+    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), "sqlite::memory:")
+        .await
+        .context("Failed to create WasmtimeD")?;
 
     tokio::spawn(async move {
         if let Err(e) = daemon.serve().await {
@@ -21,25 +55,36 @@ async fn setup_daemon() -> Result<()> {
         }
     });
 
-    // Wait for the daemon to start
-    sleep(Duration::from_secs(1)).await;
-    Ok(())
-}
+    let mut client = wait_for_client()
+        .await
+        .context("Failed to connect to daemon")?;
 
-async fn create_client() -> Result<LifecycleManagerServiceClient<Channel>> {
-    let channel = Channel::from_static("http://[::1]:50051").connect().await?;
-    Ok(LifecycleManagerServiceClient::new(channel))
+    let mut retries = 5;
+    while retries > 0 {
+        match cleanup_components(&mut client).await {
+            Ok(_) => return Ok(client),
+            Err(_) if retries > 1 => {
+                retries -= 1;
+                sleep(Duration::from_millis(200)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err(anyhow::anyhow!("Failed to verify daemon is working"))
 }
 
 #[test(tokio::test)]
 async fn test_fetch_component_workflow() -> Result<()> {
-    setup_daemon().await?;
-    let mut client = create_client().await?;
+    let mut client = setup_daemon().await?;
 
     let list_request = tonic::Request::new(ListComponentsRequest {});
     let list_response = client.list_components(list_request).await?;
     let initial_components = list_response.into_inner().ids;
-    assert!(initial_components.is_empty());
+    assert!(
+        initial_components.is_empty(),
+        "Expected no components initially"
+    );
 
     let cwd = env::current_dir()?;
     let component_path = cwd.join("examples/fetch-rs/target/wasm32-wasip1/release/fetch_rs.wasm");
