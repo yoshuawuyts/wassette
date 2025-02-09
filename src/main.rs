@@ -11,6 +11,7 @@ use mcp_wasmtime_server::{
 use serde_json::json;
 use tonic::transport::Channel;
 
+mod database;
 mod wasmtimed;
 
 type GrpcClient = Arc<tokio::sync::Mutex<LifecycleManagerServiceClient<Channel>>>;
@@ -68,11 +69,10 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    let database_path =
-        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:components.db".to_string());
+    let database_url = database::resolve_database_url().await?;
 
     let addr = "[::1]:50051";
-    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), &database_path).await?;
+    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), &database_url).await?;
 
     tokio::spawn(async move {
         if let Err(e) = daemon.serve().await {
