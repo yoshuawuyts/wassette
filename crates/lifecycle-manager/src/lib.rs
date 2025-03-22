@@ -1,12 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
+use futures::TryStreamExt;
 use serde_json::Value;
-use sqlx::{Pool, Row, Sqlite, SqlitePool};
+use tokio::fs::DirEntry;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument};
 use wasmtime::component::Component;
 use wasmtime::Engine;
 
@@ -20,6 +21,15 @@ struct ToolInfo {
 pub struct ComponentRegistry {
     tool_map: HashMap<String, Vec<ToolInfo>>,
     component_map: HashMap<String, Vec<String>>,
+}
+
+/// The returned status when loading a component
+#[derive(Debug, PartialEq)]
+pub enum LoadResult {
+    /// Indicates that the component was loaded but replaced a currently loaded component
+    Replaced,
+    /// Indicates that the component did not exist and is now loaded
+    New,
 }
 
 impl ComponentRegistry {
@@ -88,91 +98,50 @@ pub struct LifecycleManager {
     pub engine: Arc<Engine>,
     pub components: Arc<RwLock<HashMap<String, Arc<Component>>>>,
     pub registry: Arc<RwLock<ComponentRegistry>>,
-    pub db: Pool<Sqlite>,
 }
 
 impl LifecycleManager {
-    #[instrument(skip(engine))]
-    pub async fn new(engine: Arc<Engine>) -> Result<Self> {
-        Self::new_with_db_url(engine, "sqlite:components.db").await
-    }
-
-    #[instrument(skip(engine))]
-    pub async fn new_with_db_url(engine: Arc<Engine>, db_url: &str) -> Result<Self> {
+    /// Creates a lifecycle manager, loading the current components from the given plugin directory
+    #[instrument(skip(engine), fields(plugin_dir = %plugin_dir.as_ref().display()))]
+    pub async fn new(engine: Arc<Engine>, plugin_dir: impl AsRef<Path>) -> Result<Self> {
         info!("Creating new LifecycleManager");
-        let db = SqlitePool::connect(db_url)
-            .await
-            .context("Failed to connect to SQLite database")?;
 
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS components (
-                id TEXT PRIMARY KEY,
-                path TEXT NOT NULL
-            )",
-        )
-        .execute(&db)
-        .await
-        .context("Failed to create components table")?;
+        let mut registry = ComponentRegistry::new();
+        let mut components = HashMap::new();
 
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS tools (
-                tool_name TEXT NOT NULL,
-                component_id TEXT NOT NULL,
-                schema TEXT NOT NULL,
-                FOREIGN KEY(component_id) REFERENCES components(id) ON DELETE CASCADE,
-                PRIMARY KEY(tool_name, component_id)
-            )",
-        )
-        .execute(&db)
-        .await
-        .context("Failed to create tools table")?;
+        let loaded_components =
+            tokio_stream::wrappers::ReadDirStream::new(tokio::fs::read_dir(plugin_dir).await?)
+                .map_err(anyhow::Error::from)
+                .try_filter_map(|entry| {
+                    let value = engine.clone();
+                    async move { load_component_from_entry(value, entry).await }
+                })
+                .try_collect::<Vec<_>>()
+                .await?;
 
-        let registry = Arc::new(RwLock::new(ComponentRegistry::new()));
-
-        let tools = sqlx::query("SELECT tool_name, component_id, schema FROM tools")
-            .fetch_all(&db)
-            .await
-            .context("Failed to load tools from database")?;
-
-        let mut registry_write = registry.write().await;
-        for tool in tools {
-            let tool_name: String = tool.try_get("tool_name")?;
-            let component_id: String = tool.try_get("component_id")?;
-            let schema_str: String = tool.try_get("schema")?;
-            let schema: Value = serde_json::from_str(&schema_str)
-                .context("Failed to parse tool schema from database")?;
-
-            registry_write
-                .tool_map
-                .entry(tool_name.clone())
-                .or_default()
-                .push(ToolInfo {
-                    component_id: component_id.clone(),
-                    schema,
-                });
-
-            registry_write
-                .component_map
-                .entry(component_id)
-                .or_default()
-                .push(tool_name);
+        for (component, name) in loaded_components.into_iter() {
+            let schema =
+                component2json::component_exports_to_json_schema(&component, &engine, true);
+            registry
+                .register_component(&name, &schema)
+                .context("unable to insert component into registry")?;
+            components.insert(name, Arc::new(component));
         }
-        drop(registry_write);
 
         info!("LifecycleManager initialized successfully");
         Ok(Self {
             engine,
-            components: Arc::new(RwLock::new(HashMap::new())),
-            registry,
-            db,
+            components: Arc::new(RwLock::new(components)),
+            registry: Arc::new(RwLock::new(registry)),
         })
     }
 
-    /// Loads a new component from a local path (or, in the future, from an OCI URL)
-    /// and associates it with the given id. If a component with the given id already exists,
-    /// it will be updated with the new component.
+    /// Loads a new component from a local path using the file stem as the ID of the component
+    ///
+    /// If a component with the given id already exists, it will be updated with the new component.
+    /// Returns the new ID and whether or not this component was replaced.
     #[instrument(skip(self), fields(path = %path.as_ref().display()))]
-    pub async fn load_component(&self, id: &str, path: impl AsRef<Path>) -> Result<()> {
+    pub async fn load_component(&self, path: impl AsRef<Path>) -> Result<(String, LoadResult)> {
         debug!("Loading component from path");
 
         // Validate path exists
@@ -195,89 +164,41 @@ impl LifecycleManager {
             }
         };
 
+        let id = path
+            .as_ref()
+            .file_stem()
+            .context("Couldn't find file name")?
+            .to_str()
+            .context("File name was not a valid string")?
+            .to_string();
+
         let schema =
             component2json::component_exports_to_json_schema(&component, &self.engine, true);
 
-        let mut tx = self.db.begin().await?;
-
-        self.registry.write().await.unregister_component(id);
-
-        sqlx::query("INSERT OR REPLACE INTO components (id, path) VALUES (?, ?)")
-            .bind(id)
-            .bind(path.as_ref().to_string_lossy())
-            .execute(&mut *tx)
-            .await
-            .context("Failed to store component in database")?;
-
-        let tools = schema["tools"].as_array().context(
-            "Schema does not contain tools array. Please ensure the component exports valid tools.",
-        )?;
-
-        sqlx::query("DELETE FROM tools WHERE component_id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .context("Failed to remove old tools from database")?;
-
-        for tool in tools {
-            let name = tool["name"]
-                .as_str()
-                .context("Tool name is not a string. Please ensure tool names are valid strings.")?
-                .to_string();
-
-            sqlx::query("INSERT INTO tools (tool_name, component_id, schema) VALUES (?, ?, ?)")
-                .bind(&name)
-                .bind(id)
-                .bind(serde_json::to_string(tool)?)
-                .execute(&mut *tx)
-                .await
-                .context("Failed to store tool in database")?;
+        {
+            let mut registry_write = self.registry.write().await;
+            registry_write.unregister_component(&id);
+            registry_write.register_component(&id, &schema)?;
         }
 
-        tx.commit().await?;
-
-        self.registry
+        let res = self
+            .components
             .write()
             .await
-            .register_component(id, &schema)
-            .context("Failed to register component tools")?;
-
-        let arc_component = Arc::new(component);
-        self.components
-            .write()
-            .await
-            .insert(id.to_string(), arc_component);
+            .insert(id.clone(), Arc::new(component))
+            .map(|_| LoadResult::Replaced)
+            .unwrap_or(LoadResult::New);
 
         info!("Successfully loaded component");
-        Ok(())
+        Ok((id, res))
     }
 
     /// Unloads the component with the specified id.
     #[instrument(skip(self))]
-    pub async fn unload_component(&self, id: &str) -> Result<()> {
+    pub async fn unload_component(&self, id: &str) {
         debug!("Unloading component");
-        let mut comps = self.components.write().await;
-        comps.remove(id);
-
-        let mut tx = self.db.begin().await?;
-
-        let result = sqlx::query("DELETE FROM components WHERE id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .context("Failed to remove component from database")?;
-
-        tx.commit().await?;
-
+        self.components.write().await.remove(id);
         self.registry.write().await.unregister_component(id);
-
-        if result.rows_affected() > 0 {
-            info!("Unloaded component '{}'", id);
-            Ok(())
-        } else {
-            warn!("Component '{}' not found", id);
-            bail!("Component with id '{}' not found", id);
-        }
     }
 
     /// Returns the component ID for a given tool name.
@@ -310,99 +231,50 @@ impl LifecycleManager {
         self.registry.read().await.list_tools()
     }
 
+    /// Returns the requested component. Returns `None` if the component is not found.
     #[instrument(skip(self))]
-    async fn load_from_db(&self, id: &str) -> Result<Arc<Component>> {
-        debug!("Loading component from database");
-        let record = sqlx::query("SELECT path FROM components WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.db)
-            .await
-            .context("Failed to query component from database")?;
-
-        if let Some(record) = record {
-            let path: String = record.try_get("path")?;
-            debug!("Found component path in database: {}", path);
-            let component = Component::from_file(&self.engine, &path)
-                .with_context(|| format!("Failed to load component from path: {}", path))?;
-            let arc_component = Arc::new(component);
-            self.components
-                .write()
-                .await
-                .insert(id.to_string(), arc_component.clone());
-            info!("Loaded component '{}' from database", id);
-            Ok(arc_component)
-        } else {
-            warn!("Component '{}' not found in database", id);
-            bail!("Component with id '{}' not found", id)
-        }
-    }
-
-    /// Returns the requested component. If no id is provided and only one component is loaded,
-    /// that component is returned; otherwise an error is raised.
-    #[instrument(skip(self))]
-    pub async fn get_component(&self, component_id: Option<&str>) -> Result<Arc<Component>> {
-        match component_id {
-            Some(id) => {
-                if let Some(comp) = self.components.read().await.get(id).cloned() {
-                    info!("Retrieved component '{}' from memory", id);
-                    return Ok(comp);
-                }
-                debug!("Component not found in memory, trying database");
-                self.load_from_db(id).await
-            }
-            None => {
-                let comps = self.components.read().await;
-                if comps.len() == 1 {
-                    info!("Retrieved single component from memory");
-                    return Ok(comps.values().next().unwrap().clone());
-                }
-                drop(comps);
-
-                let count: i64 = sqlx::query("SELECT COUNT(*) as count FROM components")
-                    .fetch_one(&self.db)
-                    .await
-                    .context("Failed to count components in database")?
-                    .try_get("count")?;
-
-                if count == 1 {
-                    let record = sqlx::query("SELECT id FROM components LIMIT 1")
-                        .fetch_one(&self.db)
-                        .await
-                        .context("Failed to get single component from database")?;
-                    let id: String = record.try_get("id")?;
-                    debug!("Found single component in database with id: {}", id);
-                    self.load_from_db(&id).await
-                } else {
-                    bail!("Multiple components loaded. Please specify component id.")
-                }
-            }
-        }
+    pub async fn get_component(&self, component_id: &str) -> Option<Arc<Component>> {
+        self.components.read().await.get(component_id).cloned()
     }
 
     #[instrument(skip(self))]
-    pub async fn list_components(&self) -> Result<Vec<String>> {
-        debug!("Listing all components");
-        let memory_components: HashSet<String> =
-            self.components.read().await.keys().cloned().collect();
-
-        let db_components: HashSet<String> = sqlx::query("SELECT id FROM components")
-            .fetch_all(&self.db)
-            .await
-            .context("Failed to query components from database")?
-            .into_iter()
-            .map(|row| row.try_get("id"))
-            .collect::<Result<_, _>>()?;
-
-        let mut all_components: Vec<String> =
-            memory_components.union(&db_components).cloned().collect();
-        all_components.sort();
-        info!("Found {} components in total", all_components.len());
-        Ok(all_components)
+    pub async fn list_components(&self) -> Vec<String> {
+        self.components.read().await.keys().cloned().collect()
     }
+}
+
+async fn load_component_from_entry(
+    engine: Arc<Engine>,
+    entry: DirEntry,
+) -> Result<Option<(Component, String)>> {
+    let is_file = entry
+        .metadata()
+        .await
+        .map(|m| m.is_file())
+        .context("unable to read file metadata")?;
+    let is_wasm = entry
+        .path()
+        .extension()
+        .map(|ext| ext == "wasm")
+        .unwrap_or(false);
+    if !(is_file && is_wasm) {
+        return Ok(None);
+    }
+    let entry_path = entry.path();
+    let component =
+        tokio::task::spawn_blocking(move || Component::from_file(&engine, entry_path)).await??;
+    let name = entry
+        .path()
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(String::from)
+        .context("wasm file didn't have a valid file name")?;
+    Ok(Some((component, name)))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Deref;
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -411,12 +283,44 @@ mod tests {
 
     use super::*;
 
-    async fn create_test_manager() -> Result<LifecycleManager> {
+    const TEST_COMPONENT_ID: &str = "fetch_rs";
+
+    /// Helper struct for keeping a reference to the temporary directory used for testing the
+    /// lifecycle manager
+    struct TestLifecycleManager {
+        pub manager: LifecycleManager,
+        _tempdir: tempfile::TempDir,
+    }
+
+    impl TestLifecycleManager {
+        pub async fn load_test_component(&self) -> Result<()> {
+            let component_path = build_example_component().await?;
+
+            self.manager.load_component(&component_path).await?;
+
+            Ok(())
+        }
+    }
+
+    impl Deref for TestLifecycleManager {
+        type Target = LifecycleManager;
+
+        fn deref(&self) -> &Self::Target {
+            &self.manager
+        }
+    }
+
+    async fn create_test_manager() -> Result<TestLifecycleManager> {
         let mut config = wasmtime::Config::new();
         config.wasm_component_model(true);
         config.async_support(true);
         let engine = Arc::new(wasmtime::Engine::new(&config)?);
-        LifecycleManager::new_with_db_url(engine, "sqlite::memory:").await
+        let tempdir = tempfile::tempdir()?;
+        let manager = LifecycleManager::new(engine, &tempdir).await?;
+        Ok(TestLifecycleManager {
+            manager,
+            _tempdir: tempdir,
+        })
     }
 
     async fn build_example_component() -> Result<PathBuf> {
@@ -509,7 +413,7 @@ mod tests {
         let component_path = temp_dir.path().join("mock_component.wasm");
         std::fs::write(&component_path, b"mock wasm bytes")?;
 
-        let load_result = manager.load_component("test-id", component_path).await;
+        let load_result = manager.load_component(component_path).await;
         assert!(load_result.is_err()); // Expected since we're using invalid WASM
 
         let lookup_result = manager.get_component_id_for_tool("non-existent").await;
@@ -528,32 +432,18 @@ mod tests {
     async fn test_load_and_unload_component() -> Result<()> {
         let manager = create_test_manager().await?;
 
-        let load_result = manager
-            .load_component("test-id", "/path/to/nonexistent")
-            .await;
+        let load_result = manager.load_component("/path/to/nonexistent").await;
         assert!(load_result.is_err());
 
-        let unload_result = manager.unload_component("non-existent").await;
-        assert!(unload_result.is_err());
+        manager.load_test_component().await?;
 
-        Ok(())
-    }
+        let loaded_components = manager.list_components().await;
+        assert_eq!(loaded_components.len(), 1);
 
-    #[test(tokio::test)]
-    async fn test_list_components() -> Result<()> {
-        let manager = create_test_manager().await?;
-        let components = manager.list_components().await?;
-        assert!(components.is_empty());
+        manager.unload_component(TEST_COMPONENT_ID).await;
 
-        sqlx::query("INSERT INTO components (id, path) VALUES (?, ?)")
-            .bind("test-component")
-            .bind("/path/to/component")
-            .execute(&manager.db)
-            .await?;
-
-        let components = manager.list_components().await?;
-        assert_eq!(components.len(), 1);
-        assert_eq!(components[0], "test-component");
+        let loaded_components = manager.list_components().await;
+        assert!(loaded_components.is_empty());
 
         Ok(())
     }
@@ -561,116 +451,33 @@ mod tests {
     #[test(tokio::test)]
     async fn test_get_component() -> Result<()> {
         let manager = create_test_manager().await?;
-        assert!(manager.get_component(Some("non-existent")).await.is_err());
-        assert!(manager.get_component(None).await.is_err());
+        assert!(manager.get_component("non-existent").await.is_none());
 
-        sqlx::query("INSERT INTO components (id, path) VALUES (?, ?)")
-            .bind("test-component")
-            .bind("/path/to/component")
-            .execute(&manager.db)
-            .await?;
+        manager.load_test_component().await?;
 
-        assert!(manager.get_component(Some("test-component")).await.is_err());
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_concurrent_access() -> Result<()> {
-        let manager = Arc::new(create_test_manager().await?);
-        let component_id = "test-component";
-        let component_path = "/path/to/component";
-
-        let manager_clone = manager.clone();
-        let write_handle = tokio::spawn(async move {
-            sqlx::query("INSERT INTO components (id, path) VALUES (?, ?)")
-                .bind(component_id)
-                .bind(component_path)
-                .execute(&manager_clone.db)
-                .await
-        });
-
-        write_handle.await??;
-
-        let components = manager.list_components().await?;
-        assert_eq!(components.len(), 1);
-        assert_eq!(components[0], component_id);
-
+        manager
+            .get_component(TEST_COMPONENT_ID)
+            .await
+            .expect("Should be able to get a component we just loaded");
         Ok(())
     }
 
     #[test(tokio::test)]
     async fn test_duplicate_component_id() -> Result<()> {
         let manager = create_test_manager().await?;
-        let component_id = "test-component";
 
-        sqlx::query("INSERT OR REPLACE INTO components (id, path) VALUES (?, ?)")
-            .bind(component_id)
-            .bind("/path/1")
-            .execute(&manager.db)
-            .await?;
+        manager.load_test_component().await?;
 
-        sqlx::query("INSERT OR REPLACE INTO components (id, path) VALUES (?, ?)")
-            .bind(component_id)
-            .bind("/path/2")
-            .execute(&manager.db)
-            .await?;
-
-        let components = manager.list_components().await?;
+        let components = manager.list_components().await;
         assert_eq!(components.len(), 1);
-        assert_eq!(components[0], component_id);
+        assert_eq!(components[0], TEST_COMPONENT_ID);
 
-        Ok(())
-    }
+        // Load again and make sure we still only have one
 
-    #[test(tokio::test)]
-    async fn test_memory_db_sync() -> Result<()> {
-        let manager = create_test_manager().await?;
-        let component_id = "test-component";
-        let component_path = "/path/to/component";
-
-        sqlx::query("INSERT INTO components (id, path) VALUES (?, ?)")
-            .bind(component_id)
-            .bind(component_path)
-            .execute(&manager.db)
-            .await?;
-
-        let components_db = manager.list_components().await?;
-        assert_eq!(components_db.len(), 1);
-
-        let components_memory = manager
-            .components
-            .read()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        assert!(components_memory.is_empty());
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_tool_registry_persistence() -> Result<()> {
-        let db_file = tempfile::NamedTempFile::new()?;
-        let db_url = format!("sqlite:{}", db_file.path().to_str().unwrap());
-
-        let mut config = wasmtime::Config::new();
-        config.wasm_component_model(true);
-        config.async_support(true);
-        let engine = Arc::new(wasmtime::Engine::new(&config)?);
-
-        let manager1 = LifecycleManager::new_with_db_url(engine.clone(), &db_url).await?;
-
-        let component_path = build_example_component().await?;
-
-        manager1
-            .load_component("comp1", component_path.to_str().unwrap())
-            .await?;
-
-        let manager2 = LifecycleManager::new_with_db_url(engine, &db_url).await?;
-
-        let component_id = manager2.get_component_id_for_tool("fetch").await?;
-        assert_eq!(component_id, "comp1");
+        manager.load_test_component().await?;
+        let components = manager.list_components().await;
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0], TEST_COMPONENT_ID);
 
         Ok(())
     }
@@ -681,18 +488,18 @@ mod tests {
         let component_path = build_example_component().await?;
 
         manager
-            .load_component("comp1", component_path.to_str().unwrap())
+            .load_component(component_path.to_str().unwrap())
             .await?;
 
         let component_id = manager.get_component_id_for_tool("fetch").await?;
-        assert_eq!(component_id, "comp1");
+        assert_eq!(component_id, TEST_COMPONENT_ID);
 
         manager
-            .load_component("comp1", component_path.to_str().unwrap())
+            .load_component(component_path.to_str().unwrap())
             .await?;
 
         let component_id = manager.get_component_id_for_tool("fetch").await?;
-        assert_eq!(component_id, "comp1");
+        assert_eq!(component_id, TEST_COMPONENT_ID);
 
         Ok(())
     }
@@ -702,38 +509,24 @@ mod tests {
         let manager = create_test_manager().await?;
         let component_path = build_example_component().await?;
 
-        manager
-            .load_component("comp1", component_path.to_str().unwrap())
+        let (_, res) = manager
+            .load_component(component_path.to_str().unwrap())
             .await?;
 
-        manager
-            .load_component("comp1", component_path.to_str().unwrap())
+        assert_eq!(LoadResult::New, res, "Should have been a new component");
+
+        let (_, res) = manager
+            .load_component(component_path.to_str().unwrap())
             .await?;
+
+        assert_eq!(
+            LoadResult::Replaced,
+            res,
+            "Should have replaced the component"
+        );
 
         let component_id = manager.get_component_id_for_tool("fetch").await?;
-        assert_eq!(component_id, "comp1");
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_tool_name_collisions() -> Result<()> {
-        let manager = create_test_manager().await?;
-        let component_path = build_example_component().await?;
-
-        manager
-            .load_component("comp1", component_path.to_str().unwrap())
-            .await?;
-        manager
-            .load_component("comp2", component_path.to_str().unwrap())
-            .await?;
-
-        let result = manager.get_component_id_for_tool("fetch").await;
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Multiple components found"));
+        assert_eq!(component_id, TEST_COMPONENT_ID);
 
         Ok(())
     }

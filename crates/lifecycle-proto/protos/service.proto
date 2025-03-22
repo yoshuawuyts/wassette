@@ -4,12 +4,12 @@ package lifecycle;
 
 // Request and response for loading a component.
 message LoadComponentRequest {
-  string id = 1;
-  string path = 2;
+  string path = 1;
 }
 
 message LoadComponentResponse {
   string status = 1; // e.g. "component loaded"
+  string id = 2;
 }
 
 // Request and response for unloading a component.
@@ -23,7 +23,7 @@ message UnloadComponentResponse {
 
 // Request and response for getting a component.
 message GetComponentRequest {
-  string id = 1; // if empty, imply that the only component should be returned
+  string id = 1;
 }
 
 message GetComponentResponse {

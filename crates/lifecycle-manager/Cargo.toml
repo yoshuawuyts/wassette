@@ -4,17 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wasmtime = { workspace = true }
 anyhow = { workspace = true }
-tokio = { workspace = true, features = ["full", "test-util"] }
-tracing = { version = "0.1", features = ["attributes"] }
-sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "migrate"] }
-serde_json = { workspace = true }
 component2json = { path = "../component2json" }
+futures = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "migrate"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
+tokio-stream = { workspace = true, features = ["fs"] }
+tracing = { version = "0.1", features = ["attributes"] }
+wasmtime = { workspace = true }
 
 [dev-dependencies]
-tokio-test = "0.4"
 tempfile = "3.8"
-tracing-test = "0.2"
 test-log = { version = "0.2", features = ["trace"] }
+tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-test = "0.2"
