@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
@@ -170,27 +171,27 @@ impl LifecycleManager {
     /// Loads a new component from a local path (or, in the future, from an OCI URL)
     /// and associates it with the given id. If a component with the given id already exists,
     /// it will be updated with the new component.
-    #[instrument(skip(self))]
-    pub async fn load_component(&self, id: &str, path: &str) -> Result<()> {
+    #[instrument(skip(self), fields(path = %path.as_ref().display()))]
+    pub async fn load_component(&self, id: &str, path: impl AsRef<Path>) -> Result<()> {
         debug!("Loading component from path");
 
         // Validate path exists
-        if !std::path::Path::new(path).exists() {
-            error!("Component path does not exist: {}", path);
-            bail!("Component path does not exist: {}. Please provide a valid path to a WebAssembly component file.", path);
+        if !tokio::fs::try_exists(path.as_ref()).await? {
+            error!("Component path does not exist: {}", path.as_ref().display());
+            bail!("Component path does not exist: {}. Please provide a valid path to a WebAssembly component file.", path.as_ref().display());
         }
 
         // Validate file extension
-        if !path.ends_with(".wasm") {
-            error!("Invalid file extension for component: {}", path);
-            bail!("Invalid file extension for component: {}. Component file must have .wasm extension.", path);
+        if path.as_ref().extension().unwrap_or_default() != "wasm" {
+            error!("Invalid file extension for component");
+            bail!("Invalid file extension for component: {}. Component file must have .wasm extension.", path.as_ref().display());
         }
 
-        let component = match Component::from_file(&self.engine, path) {
+        let component = match Component::from_file(&self.engine, &path) {
             Ok(comp) => comp,
             Err(e) => {
-                error!("Failed to load component from path {}: {}", path, e);
-                bail!("Failed to load component from path: {}. Error: {}. Please ensure the file is a valid WebAssembly component.", path, e);
+                error!(err = ?e, "Failed to load component from path");
+                bail!("Failed to load component from path: {}. Error: {}. Please ensure the file is a valid WebAssembly component.", path.as_ref().display(), e);
             }
         };
 
@@ -203,7 +204,7 @@ impl LifecycleManager {
 
         sqlx::query("INSERT OR REPLACE INTO components (id, path) VALUES (?, ?)")
             .bind(id)
-            .bind(path)
+            .bind(path.as_ref().to_string_lossy())
             .execute(&mut *tx)
             .await
             .context("Failed to store component in database")?;
@@ -247,10 +248,7 @@ impl LifecycleManager {
             .await
             .insert(id.to_string(), arc_component);
 
-        info!(
-            "Successfully loaded component '{}' from path '{}'",
-            id, path
-        );
+        info!("Successfully loaded component");
         Ok(())
     }
 
@@ -511,9 +509,7 @@ mod tests {
         let component_path = temp_dir.path().join("mock_component.wasm");
         std::fs::write(&component_path, b"mock wasm bytes")?;
 
-        let load_result = manager
-            .load_component("test-id", component_path.to_str().unwrap())
-            .await;
+        let load_result = manager.load_component("test-id", component_path).await;
         assert!(load_result.is_err()); // Expected since we're using invalid WASM
 
         let lookup_result = manager.get_component_id_for_tool("non-existent").await;
