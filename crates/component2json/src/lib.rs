@@ -245,7 +245,7 @@ fn gather_exported_functions(
             let previous_name = Some(export_name.to_string());
             for (export_name, export_item) in sub_component.exports(engine) {
                 gather_exported_functions(
-                    &export_name,
+                    export_name,
                     previous_name.clone(),
                     &export_item,
                     engine,
@@ -258,7 +258,7 @@ fn gather_exported_functions(
             let previous_name = Some(export_name.to_string());
             for (export_name, export_item) in instance.exports(engine) {
                 gather_exported_functions(
-                    &export_name,
+                    export_name,
                     previous_name.clone(),
                     &export_item,
                     engine,
@@ -522,7 +522,7 @@ mod tests {
                 _ => panic!("Expected field 'a' to be S64(10)"),
             }
             match field_map.get("b") {
-                Some(Val::Bool(b)) => assert_eq!(*b, false),
+                Some(Val::Bool(b)) => assert!(!(*b)),
                 _ => panic!("Expected field 'b' to be Bool(false)"),
             }
         } else {
@@ -612,6 +612,7 @@ mod tests {
         assert_eq!(val_to_json(&u64), json!(9999));
     }
 
+    #[allow(clippy::approx_constant)]
     #[test]
     fn test_val_to_json_floats() {
         let float32 = Val::Float32(3.14);
@@ -755,7 +756,7 @@ mod tests {
         let tools = schema.get("tools").unwrap().as_array().unwrap();
         assert_eq!(tools.len(), 4);
 
-        let expected_exports = vec![
+        let expected_exports = [
             "list-directory",
             "read-file",
             "search-file",
@@ -998,7 +999,7 @@ mod tests {
         }
 
         // Test root-level functions
-        let root_a = find_tool(&tools, "a").unwrap();
+        let root_a = find_tool(tools, "a").unwrap();
         assert!(root_a
             .get("inputSchema")
             .unwrap()
@@ -1007,7 +1008,7 @@ mod tests {
             .is_object());
         assert!(root_a.get("outputSchema").is_none());
 
-        let root_b = find_tool(&tools, "b").unwrap();
+        let root_b = find_tool(tools, "b").unwrap();
         let input_schema = root_b.get("inputSchema").unwrap();
         let properties = input_schema.get("properties").unwrap().as_object().unwrap();
         assert_eq!(properties.len(), 4);
@@ -1018,7 +1019,7 @@ mod tests {
         let output_schema = root_b.get("outputSchema").unwrap();
         assert_eq!(output_schema.get("type").unwrap(), "string");
 
-        let root_c = find_tool(&tools, "c").unwrap();
+        let root_c = find_tool(tools, "c").unwrap();
         let output_schema = root_c.get("outputSchema").unwrap();
         assert_eq!(output_schema.get("type").unwrap(), "array");
         assert_eq!(output_schema.get("minItems").unwrap(), 4);
@@ -1034,7 +1035,7 @@ mod tests {
         }
 
         // Test foo namespace functions
-        let foo_a = find_tool(&tools, "foo.a").unwrap();
+        let foo_a = find_tool(tools, "foo.a").unwrap();
         assert!(foo_a
             .get("inputSchema")
             .unwrap()
@@ -1043,7 +1044,7 @@ mod tests {
             .is_object());
         assert!(foo_a.get("outputSchema").is_none());
 
-        let foo_b = find_tool(&tools, "foo.b").unwrap();
+        let foo_b = find_tool(tools, "foo.b").unwrap();
         {
             let input_props = foo_b
                 .get("inputSchema")
@@ -1116,7 +1117,7 @@ mod tests {
             );
         }
 
-        let foo_c = find_tool(&tools, "foo.c").unwrap();
+        let foo_c = find_tool(tools, "foo.c").unwrap();
         {
             let input_props = foo_c
                 .get("inputSchema")
@@ -1218,7 +1219,7 @@ mod tests {
         for val in wit_vals {
             match val {
                 Val::String(s) if s == "example" => found_name = true,
-                Val::S64(n) if n == 42 => found_value = true,
+                Val::S64(42) => found_value = true,
                 _ => {}
             }
         }
