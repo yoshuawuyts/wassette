@@ -2701,6 +2701,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4"
 
 [[package]]
+name = "mcp-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lifecycle-proto",
+ "rmcp",
+ "serde_json",
+ "tokio",
+ "tokio-test",
+ "tonic",
+ "tonic-build",
+ "tracing",
+]
+
+[[package]]
 name = "mcp-wasmtime"
 version = "0.1.0"
 dependencies = [
@@ -2708,7 +2723,7 @@ dependencies = [
  "component2json",
  "lifecycle-manager",
  "lifecycle-proto",
- "mcp-wasmtime-server",
+ "mcp-server",
  "reqwest 0.11.27",
  "rmcp",
  "serde_json",
@@ -2724,21 +2739,6 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
-]
-
-[[package]]
-name = "mcp-wasmtime-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lifecycle-proto",
- "rmcp",
- "serde_json",
- "tokio",
- "tokio-test",
- "tonic",
- "tonic-build",
- "tracing",
 ]
 
 [[package]]

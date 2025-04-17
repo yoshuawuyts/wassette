@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use lifecycle_proto::lifecycle::lifecycle_manager_service_client::LifecycleManagerServiceClient;
-use mcp_wasmtime_server::{
+use mcp_server::{
     handle_prompts_list, handle_resources_list, handle_tools_call, handle_tools_list, GrpcClient,
 };
 use rmcp::model::{
@@ -129,7 +129,6 @@ async fn main() -> Result<()> {
     let grpc_addr = "[::1]:50051";
     let daemon = wasmtimed::WasmtimeD::new(grpc_addr.to_string(), &database_url).await?;
 
-    // Create a cancellation token for coordinating shutdown
     let daemon_shutdown_token = CancellationToken::new();
     let daemon_token_clone = daemon_shutdown_token.clone();
 
@@ -147,20 +146,17 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Initialize gRPC client
     let grpc_client =
         LifecycleManagerServiceClient::connect(format!("http://{}", grpc_addr)).await?;
     let grpc_client = Arc::new(tokio::sync::Mutex::new(grpc_client));
 
     let server = McpServer::new(grpc_client);
 
-    // Serve the SSE server and get the cancellation token
     tracing::info!("Starting MCP server on {}", BIND_ADDRESS);
     let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
         .await?
         .with_service(move || server.clone());
 
-    // Setup Ctrl+C handler
     tokio::signal::ctrl_c().await?;
     ct.cancel();
     daemon_shutdown_token.cancel();

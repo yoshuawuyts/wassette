@@ -19,7 +19,7 @@ wasmtime-wasi-http = "29.0.1"
 component2json = { path = "crates/component2json" }
 lifecycle-manager = { path = "crates/lifecycle-manager" }
 lifecycle-proto = { path = "crates/lifecycle-proto" }
-mcp-wasmtime-server = { path = "crates/mcp-wasmtime-server"  }
+mcp-server = { path = "crates/mcp-server"  }
 tonic = { version = "0.12", features = ["transport", "codegen", "prost"] }
 prost = "0.13"
 rmcp = { version = "0.1.5", features = ["server", "transport-sse-server", "macros"] }
@@ -36,7 +36,7 @@ wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 component2json = { workspace = true }
 lifecycle-manager = { workspace = true }
-mcp-wasmtime-server = { workspace = true }
+mcp-server = { workspace = true }
 lifecycle-proto = { workspace = true }
 tonic = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
