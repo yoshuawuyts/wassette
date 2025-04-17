@@ -1,9 +1,9 @@
+use std::borrow::Cow;
+use std::sync::Arc;
+
 use anyhow::Result;
-use mcp_sdk::types::{
-    CallToolRequest, CallToolResponse, ListRequest, ToolDefinition, ToolsListResponse,
-};
-use serde_json::json;
-use tokio::task::block_in_place;
+use rmcp::model::{CallToolRequestParam, CallToolResult, Content, Tool};
+use serde_json::{json, Value};
 use tracing::{debug, error, info};
 
 use crate::components::{
@@ -11,73 +11,87 @@ use crate::components::{
 };
 use crate::GrpcClient;
 
-pub fn handle_tools_list(_req: ListRequest, grpc_client: GrpcClient) -> Result<ToolsListResponse> {
+pub async fn handle_tools_list(_req: Value, grpc_client: GrpcClient) -> Result<Value> {
     debug!("Handling tools list request");
-    block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(async {
-            let mut tools = get_component_tools(&grpc_client).await?;
-            tools.extend(get_builtin_tools());
-            info!("Retrieved {} tools", tools.len());
-            Ok(ToolsListResponse {
-                tools,
-                next_cursor: None,
-                meta: None,
-            })
-        })
-    })
+
+    let mut tools = get_component_tools(&grpc_client).await?;
+    tools.extend(get_builtin_tools());
+    info!("Retrieved {} tools", tools.len());
+
+    let response = rmcp::model::ListToolsResult {
+        tools,
+        next_cursor: None,
+    };
+
+    Ok(serde_json::to_value(response)?)
 }
 
-pub fn handle_tools_call(
-    req: CallToolRequest,
+pub async fn handle_tools_call(
+    req: CallToolRequestParam,
     grpc_client: GrpcClient,
-) -> Result<CallToolResponse> {
-    info!("Handling tool call for: {}", req.name);
-    block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(async {
-            let mut client = grpc_client.lock().await;
-            let result = match req.name.as_str() {
-                "load-component" => handle_load_component(&req, &mut client).await,
-                "unload-component" => handle_unload_component(&req, &mut client).await,
-                _ => handle_component_call(&req, &mut client).await,
+) -> Result<Value> {
+    // Extract the method name as a string
+    let method_name = req.name.to_string();
+    info!("Handling tool call for: {}", method_name);
+
+    let mut client = grpc_client.lock().await;
+
+    let result = match method_name.as_str() {
+        "load-component" => handle_load_component(&req, &mut client).await,
+        "unload-component" => handle_unload_component(&req, &mut client).await,
+        _ => handle_component_call(&req, &mut client).await,
+    };
+
+    if let Err(ref e) = result {
+        error!("Tool call failed: {}", e);
+    }
+
+    match result {
+        Ok(result) => Ok(serde_json::to_value(result)?),
+        Err(e) => {
+            // Return an error result with explicit type
+            let error_text = format!("Error: {}", e);
+            let mut contents = Vec::new();
+            contents.push(Content::text(error_text));
+
+            let error_result = CallToolResult {
+                content: contents,
+                is_error: Some(true),
             };
-            if let Err(ref e) = result {
-                error!("Tool call failed: {}", e);
-            }
-            result
-        })
-    })
+            Ok(serde_json::to_value(error_result)?)
+        }
+    }
 }
 
-fn get_builtin_tools() -> Vec<ToolDefinition> {
+fn get_builtin_tools() -> Vec<Tool> {
     debug!("Getting builtin tools");
     vec![
-        ToolDefinition {
-            name: "load-component".to_string(),
-            description: Some(
+        Tool {
+            name: Cow::Borrowed("load-component"),
+            description: Cow::Borrowed(
                 "Dynamically loads a new WebAssembly component. Arguments: id (string), path (string)"
-                    .to_string(),
             ),
-            input_schema: json!({
+            input_schema: Arc::new(serde_json::from_value(json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
                     "path": {"type": "string"}
                 },
                 "required": ["id", "path"]
-            }),
+            })).unwrap_or_default()),
         },
-        ToolDefinition {
-            name: "unload-component".to_string(),
-            description: Some(
-                "Dynamically unloads a WebAssembly component. Argument: id (string)".to_string(),
+        Tool {
+            name: Cow::Borrowed("unload-component"),
+            description: Cow::Borrowed(
+                "Dynamically unloads a WebAssembly component. Argument: id (string)"
             ),
-            input_schema: json!({
+            input_schema: Arc::new(serde_json::from_value(json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"}
                 },
                 "required": ["id"]
-            }),
+            })).unwrap_or_default()),
         },
     ]
 }

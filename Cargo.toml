@@ -11,9 +11,8 @@ tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing = "0.1"
-mcp-sdk = "0.0.3"
 wasmtime = "29.0.1"
 wasmtime-wasi = "29.0.1"
 wasmtime-wasi-http = "29.0.1"
@@ -23,7 +22,8 @@ lifecycle-proto = { path = "crates/lifecycle-proto" }
 mcp-wasmtime-server = { path = "crates/mcp-wasmtime-server"  }
 tonic = { version = "0.12", features = ["transport", "codegen", "prost"] }
 prost = "0.13"
-
+rmcp = { version = "0.1.5", features = ["server", "transport-sse-server", "macros"] }
+tokio-util = "0.7.14"
 
 [dependencies]
 tokio = { workspace = true }
@@ -31,7 +31,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
-mcp-sdk = { workspace = true }
+rmcp = { workspace = true }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 component2json = { workspace = true }
@@ -40,6 +40,7 @@ mcp-wasmtime-server = { workspace = true }
 lifecycle-proto = { workspace = true }
 tonic = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
+tokio-util = { workspace = true }
 
 [[bin]]
 name = "mcp-wasmtime"
