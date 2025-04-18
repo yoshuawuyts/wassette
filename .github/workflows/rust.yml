@@ -35,6 +35,7 @@ jobs:
     - run: ./scripts/install-protobuf.sh
       shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@v1
+    - run: cargo install cargo-component
     - name: Build
       run: cargo build --verbose --workspace
     - name: Run tests
