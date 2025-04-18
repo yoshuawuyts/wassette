@@ -35,7 +35,7 @@ jobs:
     - run: ./scripts/install-protobuf.sh
       shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@v1
-    - run: cargo install cargo-component
+    - run: rustup target add wasm32-wasip2
     - name: Build
       run: cargo build --verbose --workspace
     - name: Run tests
