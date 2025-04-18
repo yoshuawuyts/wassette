@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use rmcp::model::{CallToolRequestParam, CallToolResult, Content, Tool};
+use rmcp::{Peer, RoleServer};
 use serde_json::{json, Value};
 use tracing::{debug, error, info};
 
@@ -29,6 +30,7 @@ pub async fn handle_tools_list(_req: Value, grpc_client: GrpcClient) -> Result<V
 pub async fn handle_tools_call(
     req: CallToolRequestParam,
     grpc_client: GrpcClient,
+    server_peer: Option<Peer<RoleServer>>,
 ) -> Result<Value> {
     // Extract the method name as a string
     let method_name = req.name.to_string();
@@ -37,8 +39,8 @@ pub async fn handle_tools_call(
     let mut client = grpc_client.lock().await;
 
     let result = match method_name.as_str() {
-        "load-component" => handle_load_component(&req, &mut client).await,
-        "unload-component" => handle_unload_component(&req, &mut client).await,
+        "load-component" => handle_load_component(&req, &mut client, server_peer).await,
+        "unload-component" => handle_unload_component(&req, &mut client, server_peer).await,
         _ => handle_component_call(&req, &mut client).await,
     };
 

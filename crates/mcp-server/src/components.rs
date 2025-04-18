@@ -8,6 +8,7 @@ use lifecycle_proto::lifecycle::{
     UnloadComponentRequest,
 };
 use rmcp::model::{CallToolRequestParam, CallToolResult, Content, Tool};
+use rmcp::{Peer, RoleServer};
 use serde_json::{json, Value};
 use tonic::transport::Channel;
 use tracing::{debug, error, info, instrument};
@@ -52,6 +53,7 @@ pub async fn get_component_tools(grpc_client: &GrpcClient) -> Result<Vec<Tool>> 
 pub(crate) async fn handle_load_component(
     req: &CallToolRequestParam,
     client: &mut LifecycleManagerServiceClient<Channel>,
+    server_peer: Option<Peer<RoleServer>>,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
 
@@ -83,6 +85,17 @@ pub(crate) async fn handle_load_component(
             let mut contents = Vec::new();
             contents.push(Content::text(status_text));
 
+            if let Some(peer) = server_peer {
+                if let Err(e) = peer.notify_tool_list_changed().await {
+                    error!("Failed to send tool list change notification: {}", e);
+                } else {
+                    info!(
+                        "Sent tool list changed notification after loading component {}",
+                        id
+                    );
+                }
+            }
+
             Ok(CallToolResult {
                 content: contents,
                 is_error: None,
@@ -103,6 +116,7 @@ pub(crate) async fn handle_load_component(
 pub(crate) async fn handle_unload_component(
     req: &CallToolRequestParam,
     client: &mut LifecycleManagerServiceClient<Channel>,
+    server_peer: Option<Peer<RoleServer>>,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
 
@@ -123,6 +137,17 @@ pub(crate) async fn handle_unload_component(
 
     let mut contents = Vec::new();
     contents.push(Content::text(status_text));
+
+    if let Some(peer) = server_peer {
+        if let Err(e) = peer.notify_tool_list_changed().await {
+            error!("Failed to send tool list change notification: {}", e);
+        } else {
+            info!(
+                "Sent tool list changed notification after unloading component {}",
+                id
+            );
+        }
+    }
 
     Ok(CallToolResult {
         content: contents,

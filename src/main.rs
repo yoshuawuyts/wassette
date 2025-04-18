@@ -26,11 +26,15 @@ const BIND_ADDRESS: &str = "127.0.0.1:9001";
 #[derive(Clone)]
 pub struct McpServer {
     grpc_client: GrpcClient,
+    peer: Option<rmcp::service::Peer<RoleServer>>,
 }
 
 impl McpServer {
     pub fn new(grpc_client: GrpcClient) -> Self {
-        Self { grpc_client }
+        Self {
+            grpc_client,
+            peer: None,
+        }
     }
 }
 
@@ -53,8 +57,11 @@ impl ServerHandler for McpServer {
         params: CallToolRequestParam,
         _ctx: RequestContext<RoleServer>,
     ) -> Pin<Box<dyn Future<Output = Result<CallToolResult, ErrorData>> + Send + 'a>> {
+        let peer_clone = self.peer.clone();
+
         Box::pin(async move {
-            let result = handle_tools_call(params, self.grpc_client.clone()).await;
+            // Pass the peer to handle_tools_call for tool list change notifications
+            let result = handle_tools_call(params, self.grpc_client.clone(), peer_clone).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
                     ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
@@ -110,6 +117,15 @@ impl ServerHandler for McpServer {
                 Err(err) => Err(ErrorData::parse_error(err.to_string(), None)),
             }
         })
+    }
+
+    fn get_peer(&self) -> Option<rmcp::service::Peer<RoleServer>> {
+        self.peer.clone()
+    }
+
+    fn set_peer(&mut self, peer: rmcp::service::Peer<RoleServer>) {
+        self.peer = Some(peer);
+        tracing::debug!("Peer connection stored for notifications");
     }
 }
 
