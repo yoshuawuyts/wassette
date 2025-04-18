@@ -87,11 +87,11 @@ async fn test_fetch_component_workflow() -> Result<()> {
     );
 
     let cwd = env::current_dir()?;
-    let component_path = cwd.join("examples/fetch-rs/target/wasm32-wasip1/release/fetch_rs.wasm");
+    let component_path = cwd.join("examples/fetch-rs/target/wasm32-wasip2/release/fetch_rs.wasm");
 
     let status = std::process::Command::new("cargo")
         .current_dir(cwd.join("examples/fetch-rs"))
-        .args(["component", "build", "--release"])
+        .args(["build", "--release", "--target", "wasm32-wasip2"])
         .status()
         .expect("Failed to compile fetch-rs component");
 

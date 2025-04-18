@@ -423,12 +423,12 @@ mod tests {
         let cwd = std::env::current_dir()?;
         println!("CWD: {}", cwd.display());
         let component_path =
-            cwd.join("../../examples/fetch-rs/target/wasm32-wasip1/release/fetch_rs.wasm");
+            cwd.join("../../examples/fetch-rs/target/wasm32-wasip2/release/fetch_rs.wasm");
 
         if !component_path.exists() {
             let status = Command::new("cargo")
                 .current_dir(cwd.join("../../examples/fetch-rs"))
-                .args(["component", "build", "--release"])
+                .args(["build", "--release", "--target", "wasm32-wasip2"])
                 .status()
                 .context("Failed to execute cargo component build")?;
 
