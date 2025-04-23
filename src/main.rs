@@ -1,6 +1,8 @@
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::{env, fs};
 
 use anyhow::Result;
 use lifecycle_proto::lifecycle::lifecycle_manager_service_client::LifecycleManagerServiceClient;
@@ -18,10 +20,35 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 
-mod database;
 mod wasmtimed;
 
 const BIND_ADDRESS: &str = "127.0.0.1:9001";
+
+/// Get the default component directory path based on the OS
+fn get_component_dir() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        let local_app_data = env::var("LOCALAPPDATA")
+            .unwrap_or_else(|_| env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string()));
+        PathBuf::from(local_app_data)
+            .join("mcp-wasmtime")
+            .join("components")
+    } else if cfg!(target_os = "macos") {
+        let home = env::var("HOME").unwrap_or_else(|_| "/".to_string());
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("mcp-wasmtime")
+            .join("components")
+    } else {
+        let xdg_data_home = env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
+            let home = env::var("HOME").unwrap_or_else(|_| "/".to_string());
+            format!("{}/.local/share", home)
+        });
+        PathBuf::from(xdg_data_home)
+            .join("mcp-wasmtime")
+            .join("components")
+    }
+}
 
 #[derive(Clone)]
 pub struct McpServer {
@@ -139,11 +166,15 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let database_url = database::resolve_database_url().await?;
+    let components_dir = get_component_dir();
+
+    if !components_dir.exists() {
+        fs::create_dir_all(&components_dir)?;
+    }
 
     // GRPC server address for wasmtimed
     let grpc_addr = "[::1]:50051";
-    let daemon = wasmtimed::WasmtimeD::new(grpc_addr.to_string(), &database_url).await?;
+    let daemon = wasmtimed::WasmtimeD::new(grpc_addr.to_string(), &components_dir).await?;
 
     let daemon_shutdown_token = CancellationToken::new();
     let daemon_token_clone = daemon_shutdown_token.clone();
