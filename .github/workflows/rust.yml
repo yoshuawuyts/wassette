@@ -37,6 +37,53 @@ jobs:
     - uses: actions-rust-lang/setup-rust-toolchain@v1
     - run: rustup target add wasm32-wasip2
     - name: Build
-      run: cargo build --verbose --workspace
+      run: cargo build --verbose --workspace --release
     - name: Run tests
-      run: cargo test --verbose --workspace
+      run: cargo test --verbose --workspace --release
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mcp-wasmtime
+        path: target/release/mcp-wasmtime
+  
+  examples:
+    strategy:
+      matrix:
+        example:
+          - filesystem
+          - fetch-rs
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - run: ./scripts/install-protobuf.sh
+      shell: bash
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
+    - run: rustup target add wasm32-wasip2
+    - run: cargo build --target wasm32-wasip2 --release
+      working-directory: examples/${{ matrix.example }}
+    - name: Set binary name
+      run: |
+        binary_name=$(echo ${{ matrix.example }} | tr '-' '_')
+        echo "binary_name=${binary_name}" >> $GITHUB_ENV
+    - name: Upload wasm
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${binary_name}.wasm
+        path: target/wasm32-wasip2/release/${binary_name}.wasm
+  
+  smoke-test:
+    needs: [build, examples]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: fetch_rs.wasm
+        path: target/wasm32-wasip2/release/fetch_rs.wasm
+    - uses: actions/download-artifact@v4
+      with:
+        name: mcp-wasmtime
+        path: target/release/mcp-wasmtime
+    - name: Run smoke test
+      run: ./scripts/verify_components.sh
+      shell: bash
