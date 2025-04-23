@@ -82,8 +82,7 @@ pub(crate) async fn handle_load_component(
                 "id": id
             }))?;
 
-            let mut contents = Vec::new();
-            contents.push(Content::text(status_text));
+            let contents = vec![Content::text(status_text)];
 
             if let Some(peer) = server_peer {
                 if let Err(e) = peer.notify_tool_list_changed().await {
@@ -135,8 +134,7 @@ pub(crate) async fn handle_unload_component(
         "id": id
     }))?;
 
-    let mut contents = Vec::new();
-    contents.push(Content::text(status_text));
+    let contents = vec![Content::text(status_text)];
 
     if let Some(peer) = server_peer {
         if let Err(e) = peer.notify_tool_list_changed().await {
@@ -180,8 +178,7 @@ pub(crate) async fn handle_component_call(
     let result_str = String::from_utf8(response.get_ref().result.clone())?;
     debug!("Component call successful");
 
-    let mut contents = Vec::new();
-    contents.push(Content::text(result_str));
+    let contents = vec![Content::text(result_str)];
 
     Ok(CallToolResult {
         content: contents,

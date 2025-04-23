@@ -53,8 +53,7 @@ pub async fn handle_tools_call(
         Err(e) => {
             // Return an error result with explicit type
             let error_text = format!("Error: {}", e);
-            let mut contents = Vec::new();
-            contents.push(Content::text(error_text));
+            let contents = vec![Content::text(error_text)];
 
             let error_result = CallToolResult {
                 content: contents,
