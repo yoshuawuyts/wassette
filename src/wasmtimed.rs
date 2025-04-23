@@ -16,12 +16,8 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use wasmtime::component::Linker;
 use wasmtime::Store;
-<<<<<<< HEAD
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi_config::{WasiConfig, WasiConfigVariables};
-=======
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
->>>>>>> 819ff9a (refactor: remove filesystem and renamed filesystem2 to filesystem)
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod wasistate;

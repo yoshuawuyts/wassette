@@ -32,19 +32,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: extractions/setup-just@v3
     - run: ./scripts/install-protobuf.sh
       shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@v1
     - run: rustup target add wasm32-wasip2
     - name: Build
-      run: cargo build --verbose --workspace --release
+      run: just build
     - name: Run tests
-      run: cargo test --verbose --workspace --release
+      run: just test
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: mcp-wasmtime
-        path: target/release/mcp-wasmtime
+        path: bin/mcp-wasmtime
   
   examples:
     strategy:
@@ -52,15 +53,17 @@ jobs:
         example:
           - filesystem
           - fetch-rs
+          - get-weather
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: extractions/setup-just@v3
     - run: ./scripts/install-protobuf.sh
       shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@v1
     - run: rustup target add wasm32-wasip2
-    - run: cargo build --target wasm32-wasip2 --release
-      working-directory: examples/${{ matrix.example }}
+    - name: Build
+      run: just build-examples
     - name: Set binary name
       run: |
         binaryName=$(echo ${{ matrix.example }} | tr '-' '_')
@@ -69,7 +72,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.binaryName }}.wasm
-        path: examples/${{ matrix.example }}/target/wasm32-wasip2/release/${{ env.binaryName }}.wasm
+        path: bin/${{ env.binaryName }}.wasm
   
   smoke-test:
     needs: [build, examples]
@@ -78,12 +81,16 @@ jobs:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4
       with:
-        name: fetch_rs.wasm
-        path: target/wasm32-wasip2/release/fetch_rs.wasm
-    - uses: actions/download-artifact@v4
-      with:
-        name: mcp-wasmtime
-        path: target/release/mcp-wasmtime
+        merge-multiple: true
+    - name: Run server
+      run: |
+        chmod +x ./mcp-wasmtime
+        RUST_LOG=debug ./mcp-wasmtime
+      shell: bash
     - name: Run smoke test
       run: ./scripts/verify_components.sh
+      shell: bash
+    - name: Clean up
+      if: always()
+      run: pkill -f mcp-wasmtime
       shell: bash

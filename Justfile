@@ -2,8 +2,22 @@ test:
     cargo test --workspace -- --nocapture
     cargo test --test integration_test -- --nocapture
 
-build:
-    cargo build --workspace
+build mode="debug":
+    mkdir -p bin
+    cargo build --workspace {{ if mode == "release" { "--release" } else { "" } }}
+    cp target/{{ mode }}/mcp-wasmtime bin/
+    
+build-examples mode="debug":
+    cargo build --target wasm32-wasip2 {{ if mode == "release" { "--release" } else { "" } }} --manifest-path examples/fetch-rs/Cargo.toml
+    cargo build --target wasm32-wasip2 {{ if mode == "release" { "--release" } else { "" } }} --manifest-path examples/filesystem/Cargo.toml
+    cd examples/get-weather && just build
+    cp examples/fetch-rs/target/wasm32-wasip2/{{ mode }}/fetch_rs.wasm bin/fetch-rs.wasm
+    cp examples/filesystem/target/wasm32-wasip2/{{ mode }}/filesystem.wasm bin/filesystem.wasm
+    cp examples/get-weather/weather.wasm bin/get-weather.wasm
+
+clean:
+    cargo clean
+    rm -rf bin
 
 run RUST_LOG='info':
     RUST_LOG={{RUST_LOG}} cargo run --bin mcp-wasmtime serve --policy-file policy.yaml

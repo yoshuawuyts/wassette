@@ -22,7 +22,7 @@ fi
 
 # now call load-component on fetch
 echo -e "\nCalling load-component on fetch..."
-npx @modelcontextprotocol/inspector --cli $SERVER_URL --method tools/call --tool-name load-component --params id=fetch path=target/wasm32-wasip2/release/fetch_rs.wasm
+npx @modelcontextprotocol/inspector --cli $SERVER_URL --method tools/call --tool-name load-component --params id=fetch path=fetch_rs.wasm
 
 RESPONSE=$(npx @modelcontextprotocol/inspector --cli $SERVER_URL --method tools/list)
 
