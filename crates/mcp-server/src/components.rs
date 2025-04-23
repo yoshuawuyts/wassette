@@ -1,10 +1,14 @@
+use std::borrow::Cow;
+use std::sync::Arc;
+
 use anyhow::Result;
 use lifecycle_proto::lifecycle::lifecycle_manager_service_client::LifecycleManagerServiceClient;
 use lifecycle_proto::lifecycle::{
     CallComponentRequest, GetComponentRequest, ListComponentsRequest, LoadComponentRequest,
     UnloadComponentRequest,
 };
-use mcp_sdk::types::{CallToolRequest, CallToolResponse, ToolDefinition, ToolResponseContent};
+use rmcp::model::{CallToolRequestParam, CallToolResult, Content, Tool};
+use rmcp::{Peer, RoleServer};
 use serde_json::{json, Value};
 use tonic::transport::Channel;
 use tracing::{debug, error, info, instrument};
@@ -12,7 +16,7 @@ use tracing::{debug, error, info, instrument};
 use crate::GrpcClient;
 
 #[instrument(skip(grpc_client))]
-pub async fn get_component_tools(grpc_client: &GrpcClient) -> Result<Vec<ToolDefinition>> {
+pub async fn get_component_tools(grpc_client: &GrpcClient) -> Result<Vec<Tool>> {
     let mut client = grpc_client.lock().await;
     debug!("Listing components");
     let components = client
@@ -47,10 +51,12 @@ pub async fn get_component_tools(grpc_client: &GrpcClient) -> Result<Vec<ToolDef
 
 #[instrument(skip(client))]
 pub(crate) async fn handle_load_component(
-    req: &CallToolRequest,
+    req: &CallToolRequestParam,
     client: &mut LifecycleManagerServiceClient<Channel>,
-) -> Result<CallToolResponse> {
-    let args = req.arguments.clone().unwrap_or(Value::Null);
+    server_peer: Option<Peer<RoleServer>>,
+) -> Result<CallToolResult> {
+    let args = extract_args_from_request(req)?;
+
     let id = args
         .get("id")
         .and_then(|v| v.as_str())
@@ -70,16 +76,30 @@ pub(crate) async fn handle_load_component(
         .await;
 
     match response {
-        Ok(_) => Ok(CallToolResponse {
-            content: vec![ToolResponseContent::Text {
-                text: serde_json::to_string(&json!({
-                    "status": "component loaded",
-                    "id": id
-                }))?,
-            }],
-            is_error: None,
-            meta: None,
-        }),
+        Ok(_) => {
+            let status_text = serde_json::to_string(&json!({
+                "status": "component loaded",
+                "id": id
+            }))?;
+
+            let contents = vec![Content::text(status_text)];
+
+            if let Some(peer) = server_peer {
+                if let Err(e) = peer.notify_tool_list_changed().await {
+                    error!("Failed to send tool list change notification: {}", e);
+                } else {
+                    info!(
+                        "Sent tool list changed notification after loading component {}",
+                        id
+                    );
+                }
+            }
+
+            Ok(CallToolResult {
+                content: contents,
+                is_error: None,
+            })
+        }
         Err(e) => {
             error!("Failed to load component: {}", e);
             Err(anyhow::anyhow!(
@@ -93,10 +113,12 @@ pub(crate) async fn handle_load_component(
 
 #[instrument(skip(client))]
 pub(crate) async fn handle_unload_component(
-    req: &CallToolRequest,
+    req: &CallToolRequestParam,
     client: &mut LifecycleManagerServiceClient<Channel>,
-) -> Result<CallToolResponse> {
-    let args = req.arguments.clone().unwrap_or(Value::Null);
+    server_peer: Option<Peer<RoleServer>>,
+) -> Result<CallToolResult> {
+    let args = extract_args_from_request(req)?;
+
     let id = args
         .get("id")
         .and_then(|v| v.as_str())
@@ -107,30 +129,44 @@ pub(crate) async fn handle_unload_component(
         .unload_component(UnloadComponentRequest { id: id.to_string() })
         .await?;
 
-    Ok(CallToolResponse {
-        content: vec![ToolResponseContent::Text {
-            text: serde_json::to_string(&json!({
-                "status": "component unloaded",
-                "id": id
-            }))?,
-        }],
+    let status_text = serde_json::to_string(&json!({
+        "status": "component unloaded",
+        "id": id
+    }))?;
+
+    let contents = vec![Content::text(status_text)];
+
+    if let Some(peer) = server_peer {
+        if let Err(e) = peer.notify_tool_list_changed().await {
+            error!("Failed to send tool list change notification: {}", e);
+        } else {
+            info!(
+                "Sent tool list changed notification after unloading component {}",
+                id
+            );
+        }
+    }
+
+    Ok(CallToolResult {
+        content: contents,
         is_error: None,
-        meta: None,
     })
 }
 
 #[instrument(skip(client))]
 pub(crate) async fn handle_component_call(
-    req: &CallToolRequest,
+    req: &CallToolRequestParam,
     client: &mut LifecycleManagerServiceClient<Channel>,
-) -> Result<CallToolResponse> {
-    let arguments = req.arguments.clone().unwrap_or(Value::Null);
-    info!("Calling function {}", req.name);
+) -> Result<CallToolResult> {
+    let args = extract_args_from_request(req)?;
+
+    let method_name = req.name.to_string();
+    info!("Calling function {}", method_name);
 
     let response = client
         .call_component(CallComponentRequest {
-            parameters: serde_json::to_string(&arguments)?,
-            function_name: req.name.clone(),
+            parameters: serde_json::to_string(&args)?,
+            function_name: method_name,
         })
         .await?;
 
@@ -142,32 +178,45 @@ pub(crate) async fn handle_component_call(
     let result_str = String::from_utf8(response.get_ref().result.clone())?;
     debug!("Component call successful");
 
-    Ok(CallToolResponse {
-        content: vec![ToolResponseContent::Text { text: result_str }],
+    let contents = vec![Content::text(result_str)];
+
+    Ok(CallToolResult {
+        content: contents,
         is_error: None,
-        meta: None,
     })
 }
 
+fn extract_args_from_request(req: &CallToolRequestParam) -> Result<serde_json::Map<String, Value>> {
+    let params_value = serde_json::to_value(&req.arguments)?;
+
+    match params_value {
+        Value::Object(map) => Ok(map),
+        _ => Err(anyhow::anyhow!(
+            "Parameters are not in expected object format"
+        )),
+    }
+}
+
 #[instrument]
-fn parse_tool_schema(tool_json: &Value) -> Option<ToolDefinition> {
+fn parse_tool_schema(tool_json: &Value) -> Option<Tool> {
     let name = tool_json
         .get("name")
         .and_then(|v| v.as_str())
-        .unwrap_or("<unnamed>")
-        .to_string();
+        .unwrap_or("<unnamed>");
+
     let description = tool_json
         .get("description")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .unwrap_or("No description available");
+
     let input_schema = tool_json.get("inputSchema").cloned().unwrap_or(json!({}));
 
     debug!("Parsed tool schema for {}", name);
 
-    Some(ToolDefinition {
-        name,
-        description,
-        input_schema,
+    Some(Tool {
+        name: Cow::Owned(name.to_string()),
+        description: Cow::Owned(description.to_string()),
+        input_schema: Arc::new(serde_json::from_value(input_schema).unwrap_or_default()),
     })
 }
 
@@ -191,15 +240,15 @@ mod tests {
         let tool = parse_tool_schema(&tool_json).unwrap();
 
         assert_eq!(tool.name, "test-tool");
-        assert_eq!(tool.description, Some("Test tool description".to_string()));
-        assert_eq!(
-            tool.input_schema,
-            json!({
-                "type": "object",
-                "properties": {
-                    "test": {"type": "string"}
-                }
-            })
-        );
+        assert_eq!(tool.description, "Test tool description");
+
+        let schema_json = serde_json::to_value(&*tool.input_schema).unwrap();
+        let expected = json!({
+            "type": "object",
+            "properties": {
+                "test": {"type": "string"}
+            }
+        });
+        assert_eq!(schema_json, expected);
     }
 }

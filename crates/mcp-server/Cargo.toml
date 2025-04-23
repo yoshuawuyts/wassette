@@ -1,5 +1,5 @@
 [package]
-name = "mcp-wasmtime-server"
+name = "mcp-server"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,10 +10,10 @@ tonic-build = { version = "0.12", features = ["prost"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
-mcp-sdk = { workspace = true }
+rmcp = { workspace = true }
 lifecycle-proto = { workspace = true }
 tonic = { workspace = true }
-tracing = { version = "0.1", features = ["attributes"] }
+tracing = { workspace = true, features = ["attributes"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
