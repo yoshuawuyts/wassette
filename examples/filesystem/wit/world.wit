@@ -1,56 +1,19 @@
-package mossaka:mcp@0.1.0;
+package component:filesystem2;
 
-interface types {
-    // see: https://github.com/WebAssembly/component-model/issues/335
-    type json = string; 
+/// An example world for the component to target.
+world fs {
+    /// Get a detailed listing of all files and directories in a specified path.
+    /// Results clearly distinguish between files and directories with [FILE] and [DIR] \
+    /// prefixes. This tool is essential for understanding directory structure and \
+    /// finding specific files within a directory. Only works within allowed directories.
+    export list-directory: func(path: string) -> result<list<string>, string>;
+    
+    /// Read the complete contents of a file from the file system.
+    export read-file: func(path: string) -> result<string, string>;
 
-    record list-tools-request {
-        cursor: option<string>,
-        meta: option<json>
-    }
+    /// Recursively search for files and directories matching a pattern.
+    export search-file: func(path: string, pattern: string) -> result<string, string>;
 
-    record list-tools-response {
-        tools: list<tool-definition>,
-        next-cursor: option<string>,
-        meta: option<json>
-    }
-
-    record tool-definition {
-        name: string,
-        description: option<string>,
-        input-schema: json,
-    }
-
-    record call-tool-request {
-        name: string,
-        arguments: option<json>,
-        meta: option<json>
-    }
-
-    record tool-response-text {
-        text: string
-    }
-
-    variant tool-response-content {
-        text(tool-response-text),
-        // TODO add image and resource
-    }
-
-    record call-tool-response {
-        content: list<tool-response-content>,
-        is-error: option<bool>,
-        meta: option<json>
-    }
-}
-
-
-interface tool-server {
-    use types.{call-tool-request, call-tool-response, list-tools-request, list-tools-response};
-
-    call-tool: func(req: call-tool-request) -> call-tool-response;
-    list-tools: func(req: list-tools-request) -> list-tools-response;
-}
-
-world mcp {
-  export tool-server;
+    /// Retrieve detailed metadata about a file or directory.
+    export get-file-info: func(path: string) -> result<string, string>;
 }
