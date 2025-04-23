@@ -63,13 +63,13 @@ jobs:
       working-directory: examples/${{ matrix.example }}
     - name: Set binary name
       run: |
-        binary_name=$(echo ${{ matrix.example }} | tr '-' '_')
-        echo "binary_name=${binary_name}" >> $GITHUB_ENV
+        binaryName=$(echo ${{ matrix.example }} | tr '-' '_')
+        echo "binaryName=${binaryName}" >> $GITHUB_ENV
     - name: Upload wasm
       uses: actions/upload-artifact@v4
       with:
-        name: ${binary_name}.wasm
-        path: target/wasm32-wasip2/release/${binary_name}.wasm
+        name: ${{ env.binaryName }}.wasm
+        path: examples/${{ matrix.example }}/target/wasm32-wasip2/release/${{ env.binaryName }}.wasm
   
   smoke-test:
     needs: [build, examples]
