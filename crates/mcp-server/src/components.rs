@@ -56,30 +56,26 @@ pub(crate) async fn handle_load_component(
     server_peer: Option<Peer<RoleServer>>,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
-
-    let id = args
-        .get("id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Missing required argument: 'id'"))?;
     let path = args
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing required argument: 'path'"))?;
 
-    info!("Loading component {} from path {}", id, path);
+    info!("Loading component from path {}", path);
 
     let response = client
         .load_component(LoadComponentRequest {
-            id: id.to_string(),
             path: path.to_string(),
         })
         .await;
 
     match response {
-        Ok(_) => {
+        Ok(res) => {
+            let res = res.into_inner();
+
             let status_text = serde_json::to_string(&json!({
-                "status": "component loaded",
-                "id": id
+                "status": res.status,
+                "id": res.id
             }))?;
 
             let contents = vec![Content::text(status_text)];
@@ -90,7 +86,7 @@ pub(crate) async fn handle_load_component(
                 } else {
                     info!(
                         "Sent tool list changed notification after loading component {}",
-                        id
+                        res.id
                     );
                 }
             }

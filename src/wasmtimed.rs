@@ -1,3 +1,5 @@
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
@@ -16,6 +18,8 @@ use wasmtime::component::Linker;
 use wasmtime::Store;
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+
+const PATH_NOT_FILE_ERROR: &str = "Path is not a file";
 
 struct WasiState {
     ctx: wasmtime_wasi::WasiCtx,
@@ -46,9 +50,20 @@ impl WasiHttpView for WasiState {
 #[derive(Clone)]
 struct LifecycleManagerServiceImpl {
     manager: Arc<LifecycleManager>,
+    plugin_dir: PathBuf,
 }
 
 impl LifecycleManagerServiceImpl {
+    async fn copy_to_dir(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        let metadata = tokio::fs::metadata(&path).await?;
+        if !metadata.is_file() {
+            return Err(std::io::Error::new(ErrorKind::Other, PATH_NOT_FILE_ERROR));
+        }
+        // NOTE: We just checked this was a file by reading metadata so we can unwrap here
+        let dest = self.plugin_dir.join(path.as_ref().file_name().unwrap());
+        tokio::fs::copy(path, dest).await.map(|_| ())
+    }
+
     async fn execute_component_call(
         &self,
         component: &wasmtime::component::Component,
@@ -117,12 +132,27 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         request: Request<LoadComponentRequest>,
     ) -> Result<Response<LoadComponentResponse>, Status> {
         let req = request.into_inner();
-        self.manager
-            .load_component(&req.id, &req.path)
+        // Load the request file into the directory
+        if let Err(e) = self.copy_to_dir(&req.path).await {
+            let status = match e.kind() {
+                ErrorKind::NotFound => {
+                    Status::invalid_argument(format!("No file found at path {}", req.path))
+                }
+                ErrorKind::Other if e.to_string().contains(PATH_NOT_FILE_ERROR) => {
+                    Status::invalid_argument(format!("Given path {} is not a file", req.path))
+                }
+                _ => Status::internal(e.to_string()),
+            };
+            return Err(status);
+        }
+        let (id, _) = self
+            .manager
+            .load_component(&req.path)
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
         Ok(Response::new(LoadComponentResponse {
-            status: format!("component loaded: {}", req.id),
+            status: "component loaded".to_string(),
+            id,
         }))
     }
 
@@ -131,10 +161,7 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         request: Request<UnloadComponentRequest>,
     ) -> Result<Response<UnloadComponentResponse>, Status> {
         let req = request.into_inner();
-        self.manager
-            .unload_component(&req.id)
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+        self.manager.unload_component(&req.id).await;
         Ok(Response::new(UnloadComponentResponse {
             status: format!("component unloaded: {}", req.id),
         }))
@@ -145,15 +172,12 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         request: Request<GetComponentRequest>,
     ) -> Result<Response<GetComponentResponse>, Status> {
         let req = request.into_inner();
-        let component = self
-            .manager
-            .get_component(if req.id.is_empty() {
-                None
-            } else {
-                Some(&req.id)
-            })
-            .await
-            .map_err(|e| Status::not_found(e.to_string()))?;
+        if req.id.is_empty() {
+            return Err(Status::invalid_argument("ID field must be set"));
+        }
+        let component = self.manager.get_component(&req.id).await.ok_or_else(|| {
+            Status::not_found(format!("Component with ID of {} not found", req.id))
+        })?;
 
         let schema =
             component_exports_to_json_schema(&component, self.manager.engine.as_ref(), true);
@@ -167,11 +191,7 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         &self,
         _request: Request<ListComponentsRequest>,
     ) -> Result<Response<ListComponentsResponse>, Status> {
-        let ids = self
-            .manager
-            .list_components()
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+        let ids = self.manager.list_components().await;
         Ok(Response::new(ListComponentsResponse { ids }))
     }
 
@@ -194,9 +214,11 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
 
         let component = self
             .manager
-            .get_component(Some(&component_id))
+            .get_component(&component_id)
             .await
-            .map_err(|e| Status::not_found(e.to_string()))?;
+            .ok_or_else(|| {
+                Status::not_found(format!("Component with ID {} not found", component_id))
+            })?;
 
         match self
             .execute_component_call(&component, &req.function_name, &req.parameters)
@@ -217,24 +239,30 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
 pub struct WasmtimeD {
     addr: String,
     manager: Arc<LifecycleManager>,
+    plugin_dir: PathBuf,
 }
 
 impl WasmtimeD {
-    pub async fn new(addr: String, db_url: &str) -> anyhow::Result<Self> {
+    pub async fn new(addr: String, plugin_dir: impl AsRef<Path>) -> anyhow::Result<Self> {
         let mut config = wasmtime::Config::new();
         config.wasm_component_model(true);
         config.async_support(true);
         let engine = Arc::new(wasmtime::Engine::new(&config)?);
 
-        let manager = Arc::new(LifecycleManager::new_with_db_url(engine, db_url).await?);
+        let manager = Arc::new(LifecycleManager::new(engine, &plugin_dir).await?);
 
-        Ok(Self { addr, manager })
+        Ok(Self {
+            addr,
+            manager,
+            plugin_dir: plugin_dir.as_ref().to_path_buf(),
+        })
     }
 
     pub async fn serve(self) -> anyhow::Result<()> {
         let addr = self.addr.parse()?;
         let svc = LifecycleManagerServiceImpl {
             manager: self.manager,
+            plugin_dir: self.plugin_dir,
         };
 
         tracing::info!("Daemon listening on {}", addr);

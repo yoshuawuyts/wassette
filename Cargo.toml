@@ -7,10 +7,12 @@ edition = "2021"
 members = ["crates/*"]
 
 [workspace.dependencies]
-tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+etcetera = "0.10"
+futures = "0.3"
+mcp-sdk = "0.0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-anyhow = "1.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing = "0.1"
 wasmtime = "29.0.1"
@@ -19,28 +21,31 @@ wasmtime-wasi-http = "29.0.1"
 component2json = { path = "crates/component2json" }
 lifecycle-manager = { path = "crates/lifecycle-manager" }
 lifecycle-proto = { path = "crates/lifecycle-proto" }
-mcp-server = { path = "crates/mcp-server"  }
+mcp-server = { path = "crates/mcp-server" }
+tokio = { version = "1.0", features = ["full"] }
+tokio-stream = "0.1"
 tonic = { version = "0.12", features = ["transport", "codegen", "prost"] }
 prost = "0.13"
 rmcp = { version = "0.1.5", features = ["server", "transport-sse-server", "macros"] }
 tokio-util = "0.7.14"
 
 [dependencies]
-tokio = { workspace = true }
-serde_json = { workspace = true }
 anyhow = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing = { workspace = true }
-rmcp = { workspace = true }
-wasmtime = { workspace = true }
-wasmtime-wasi = { workspace = true }
 component2json = { workspace = true }
 lifecycle-manager = { workspace = true }
-mcp-server = { workspace = true }
 lifecycle-proto = { workspace = true }
-tonic = { workspace = true }
-wasmtime-wasi-http = { workspace = true }
+mcp-sdk = { workspace = true }
+mcp-server = { workspace = true }
+rmcp = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
 tokio-util = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+wasmtime-wasi-http = { workspace = true }
 
 [[bin]]
 name = "mcp-wasmtime"
@@ -55,9 +60,9 @@ name = "fetch-runtime"
 path = "cmd/fetch-runtime.rs"
 
 [dev-dependencies]
-tokio-test = "0.4"
-tempfile = "3.8"
-test-log = { version = "0.2", features = ["trace"] }
-tracing-test = "0.2"
 reqwest = { version = "0.11", features = ["json"] }
 serde_json = { workspace = true }
+tempfile = "3.8"
+test-log = { version = "0.2", features = ["trace"] }
+tokio-test = "0.4"
+tracing-test = "0.2"

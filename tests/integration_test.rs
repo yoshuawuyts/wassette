@@ -8,6 +8,7 @@ use lifecycle_proto::lifecycle::{
     UnloadComponentRequest,
 };
 use mcp_wasmtime::wasmtimed;
+use tempfile::TempDir;
 use test_log::test;
 use tokio::time::sleep;
 use tonic::transport::Channel;
@@ -43,9 +44,10 @@ async fn cleanup_components(client: &mut LifecycleManagerServiceClient<Channel>)
     Ok(())
 }
 
-async fn setup_daemon() -> Result<LifecycleManagerServiceClient<Channel>> {
+async fn setup_daemon() -> Result<(LifecycleManagerServiceClient<Channel>, TempDir)> {
     let addr = "[::1]:50051";
-    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), "sqlite::memory:")
+    let tempdir = tempfile::tempdir()?;
+    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), &tempdir)
         .await
         .context("Failed to create WasmtimeD")?;
 
@@ -62,7 +64,7 @@ async fn setup_daemon() -> Result<LifecycleManagerServiceClient<Channel>> {
     let mut retries = 5;
     while retries > 0 {
         match cleanup_components(&mut client).await {
-            Ok(_) => return Ok(client),
+            Ok(_) => return Ok((client, tempdir)),
             Err(_) if retries > 1 => {
                 retries -= 1;
                 sleep(Duration::from_millis(200)).await;
@@ -76,7 +78,7 @@ async fn setup_daemon() -> Result<LifecycleManagerServiceClient<Channel>> {
 
 #[test(tokio::test)]
 async fn test_fetch_component_workflow() -> Result<()> {
-    let mut client = setup_daemon().await?;
+    let (mut client, _tempdir) = setup_daemon().await?;
 
     let list_request = tonic::Request::new(ListComponentsRequest {});
     let list_response = client.list_components(list_request).await?;
@@ -100,7 +102,6 @@ async fn test_fetch_component_workflow() -> Result<()> {
     }
 
     let load_request = tonic::Request::new(LoadComponentRequest {
-        id: "fetch".to_string(),
         path: component_path.to_str().unwrap().to_string(),
     });
     client.load_component(load_request).await?;
@@ -109,10 +110,10 @@ async fn test_fetch_component_workflow() -> Result<()> {
     let list_response = client.list_components(list_request).await?;
     let components_after_load = list_response.into_inner().ids;
     assert_eq!(components_after_load.len(), 1);
-    assert_eq!(components_after_load[0], "fetch");
+    assert_eq!(components_after_load[0], "fetch_rs");
 
     let get_request = tonic::Request::new(GetComponentRequest {
-        id: "fetch".to_string(),
+        id: "fetch_rs".to_string(),
     });
     let get_response = client.get_component(get_request).await?;
     let component_details = get_response.into_inner().details;
@@ -135,15 +136,13 @@ async fn test_fetch_component_workflow() -> Result<()> {
     assert!(response_body.contains("Example Domain"));
     assert!(response_body.contains("This domain is for use in illustrative examples in documents"));
 
-    let load_request1 = tonic::Request::new(LoadComponentRequest {
-        id: "fetch1".to_string(),
-        path: component_path.to_str().unwrap().to_string(),
-    });
-    client.load_component(load_request1).await?;
+    // Copy the component to another name
+    let mut component_path2 = component_path.clone();
+    component_path2.set_file_name("fetch2.wasm");
+    tokio::fs::copy(&component_path, &component_path2).await?;
 
     let load_request2 = tonic::Request::new(LoadComponentRequest {
-        id: "fetch2".to_string(),
-        path: component_path.to_str().unwrap().to_string(),
+        path: component_path2.to_str().unwrap().to_string(),
     });
     client.load_component(load_request2).await?;
 
@@ -158,7 +157,7 @@ async fn test_fetch_component_workflow() -> Result<()> {
     assert!(error
         .message()
         .contains("Multiple components found for tool 'fetch'"));
-    assert!(error.message().contains("fetch1"));
+    assert!(error.message().contains("fetch_rs"));
     assert!(error.message().contains("fetch2"));
 
     Ok(())
