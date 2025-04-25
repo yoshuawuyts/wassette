@@ -27,21 +27,19 @@ struct WasiState {
     http: wasmtime_wasi_http::WasiHttpCtx,
 }
 
-impl wasmtime_wasi::WasiView for WasiState {
+impl wasmtime_wasi::IoView for WasiState {
     fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
         &mut self.table
     }
+}
 
+impl wasmtime_wasi::WasiView for WasiState {
     fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
         &mut self.ctx
     }
 }
 
 impl WasiHttpView for WasiState {
-    fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
-        &mut self.table
-    }
-
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http
     }
