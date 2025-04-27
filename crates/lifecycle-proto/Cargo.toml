@@ -5,10 +5,10 @@ edition = "2021"
 
 [dependencies]
 tonic = { workspace = true }
-prost = "0.13"
+prost = { workspace = true }
 
 [build-dependencies]
-tonic-build = { version = "0.12", features = ["prost"] }
+tonic-build = { workspace = true, features = ["prost"] }
 
 [package.metadata.cargo-machete]
 # used as part of a derive macro

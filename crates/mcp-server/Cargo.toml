@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [build-dependencies]
-tonic-build = { version = "0.12", features = ["prost"] }
+tonic-build = { workspace = true, features = ["prost"] }
 
 [dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
@@ -16,4 +16,4 @@ tonic = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 
 [dev-dependencies]
-tokio-test = "0.4"
+tokio-test = { workspace = true }

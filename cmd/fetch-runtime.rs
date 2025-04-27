@@ -9,21 +9,19 @@ struct MyWasi {
     http: wasmtime_wasi_http::WasiHttpCtx,
 }
 
-impl WasiView for MyWasi {
+impl wasmtime_wasi::IoView for MyWasi {
     fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
         &mut self.table
     }
+}
 
+impl WasiView for MyWasi {
     fn ctx(&mut self) -> &mut WasiCtx {
         &mut self.ctx
     }
 }
 
 impl WasiHttpView for MyWasi {
-    fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
-        &mut self.table
-    }
-
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http
     }
