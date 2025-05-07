@@ -47,7 +47,7 @@ async fn cleanup_components(client: &mut LifecycleManagerServiceClient<Channel>)
 async fn setup_daemon() -> Result<(LifecycleManagerServiceClient<Channel>, TempDir)> {
     let addr = "[::1]:50051";
     let tempdir = tempfile::tempdir()?;
-    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), &tempdir)
+    let daemon = wasmtimed::WasmtimeD::new(addr.to_string(), &tempdir, None)
         .await
         .context("Failed to create WasmtimeD")?;
 
