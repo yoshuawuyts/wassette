@@ -17,6 +17,7 @@ use tonic::{Request, Response, Status};
 use wasmtime::component::Linker;
 use wasmtime::Store;
 use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi_config::{WasiConfig, WasiConfigVariables};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 const PATH_NOT_FILE_ERROR: &str = "Path is not a file";
@@ -25,6 +26,7 @@ struct WasiState {
     ctx: wasmtime_wasi::WasiCtx,
     table: wasmtime_wasi::ResourceTable,
     http: wasmtime_wasi_http::WasiHttpCtx,
+    wasi_config_vars: WasiConfigVariables,
 }
 
 impl wasmtime_wasi::IoView for WasiState {
@@ -49,6 +51,7 @@ impl WasiHttpView for WasiState {
 struct LifecycleManagerServiceImpl {
     manager: Arc<LifecycleManager>,
     plugin_dir: PathBuf,
+    policy_file: Option<String>,
 }
 
 impl LifecycleManagerServiceImpl {
@@ -72,6 +75,20 @@ impl LifecycleManagerServiceImpl {
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
 
+        let wasi_config_vars = if let Some(policy_path) = &self.policy_file {
+            let env_vars = policy::load_policy(policy_path)?;
+            let vars = WasiConfigVariables::from_iter(env_vars);
+            Some(vars)
+        } else {
+            None
+        };
+
+        if let Some(_) = wasi_config_vars {
+            wasmtime_wasi_config::add_to_linker(&mut linker, |h: &mut WasiState| {
+                WasiConfig::from(&h.wasi_config_vars)
+            })?;
+        }
+
         let table = wasmtime_wasi::ResourceTable::default();
         let ctx = WasiCtxBuilder::new()
             .inherit_stdio()
@@ -84,7 +101,22 @@ impl LifecycleManagerServiceImpl {
             .build();
         let http = WasiHttpCtx::new();
 
-        let state = WasiState { ctx, table, http };
+        let state = if let Some(config_vars) = wasi_config_vars {
+            WasiState {
+                ctx,
+                table,
+                http,
+                wasi_config_vars: config_vars,
+            }
+        } else {
+            WasiState {
+                ctx,
+                table,
+                http,
+                wasi_config_vars: wasmtime_wasi_config::WasiConfigVariables::new(),
+            }
+        };
+
         let mut store = Store::new(self.manager.engine.as_ref(), state);
 
         let instance = linker.instantiate_async(&mut store, component).await?;
@@ -238,10 +270,15 @@ pub struct WasmtimeD {
     addr: String,
     manager: Arc<LifecycleManager>,
     plugin_dir: PathBuf,
+    policy_file: Option<String>,
 }
 
 impl WasmtimeD {
-    pub async fn new(addr: String, plugin_dir: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub async fn new(
+        addr: String,
+        plugin_dir: impl AsRef<Path>,
+        policy_file: Option<&str>,
+    ) -> anyhow::Result<Self> {
         let mut config = wasmtime::Config::new();
         config.wasm_component_model(true);
         config.async_support(true);
@@ -253,6 +290,7 @@ impl WasmtimeD {
             addr,
             manager,
             plugin_dir: plugin_dir.as_ref().to_path_buf(),
+            policy_file: policy_file.map(|s| s.to_string()),
         })
     }
 
@@ -261,6 +299,7 @@ impl WasmtimeD {
         let svc = LifecycleManagerServiceImpl {
             manager: self.manager,
             plugin_dir: self.plugin_dir,
+            policy_file: self.policy_file,
         };
 
         tracing::info!("Daemon listening on {}", addr);
