@@ -47,6 +47,61 @@ impl WasiHttpView for WasiState {
     }
 }
 
+struct WasiStateBuilder {
+    ctx_builder: WasiCtxBuilder,
+    table: Option<wasmtime_wasi::ResourceTable>,
+    http: Option<wasmtime_wasi_http::WasiHttpCtx>,
+    config_vars: WasiConfigVariables,
+}
+
+impl WasiStateBuilder {
+    fn new() -> Self {
+        let mut ctx_builder = WasiCtxBuilder::new();
+        ctx_builder.inherit_stdio();
+        ctx_builder.inherit_args();
+        ctx_builder.inherit_env();
+        ctx_builder.inherit_network();
+
+        Self {
+            ctx_builder,
+            table: None,
+            http: None,
+            config_vars: WasiConfigVariables::new(),
+        }
+    }
+
+    fn allow_tcp(mut self, allow: bool) -> Self {
+        self.ctx_builder.allow_tcp(allow);
+        self
+    }
+
+    fn allow_udp(mut self, allow: bool) -> Self {
+        self.ctx_builder.allow_udp(allow);
+        self
+    }
+
+    fn allow_ip_name_lookup(mut self, allow: bool) -> Self {
+        self.ctx_builder.allow_ip_name_lookup(allow);
+        self
+    }
+
+    fn config_vars(mut self, config_vars: WasiConfigVariables) -> Self {
+        self.config_vars = config_vars;
+        self
+    }
+
+    fn build(self) -> WasiState {
+        let mut ctx_builder = self.ctx_builder;
+
+        WasiState {
+            ctx: ctx_builder.build(),
+            table: self.table.unwrap_or_default(),
+            http: self.http.unwrap_or_else(WasiHttpCtx::new),
+            wasi_config_vars: self.config_vars,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct LifecycleManagerServiceImpl {
     manager: Arc<LifecycleManager>,
@@ -74,49 +129,24 @@ impl LifecycleManagerServiceImpl {
         let mut linker = Linker::new(self.manager.engine.as_ref());
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
+        wasmtime_wasi_config::add_to_linker(&mut linker, |h: &mut WasiState| {
+            WasiConfig::from(&h.wasi_config_vars)
+        })?;
 
         let wasi_config_vars = if let Some(policy_path) = &self.policy_file {
             let env_vars = policy::load_policy(policy_path)?;
-            let vars = WasiConfigVariables::from_iter(env_vars);
-            Some(vars)
+
+            WasiConfigVariables::from_iter(env_vars)
         } else {
-            None
+            WasiConfigVariables::new()
         };
 
-        if let Some(_) = wasi_config_vars {
-            wasmtime_wasi_config::add_to_linker(&mut linker, |h: &mut WasiState| {
-                WasiConfig::from(&h.wasi_config_vars)
-            })?;
-        }
-
-        let table = wasmtime_wasi::ResourceTable::default();
-        let ctx = WasiCtxBuilder::new()
-            .inherit_stdio()
-            .inherit_args()
-            .inherit_env()
-            .inherit_network()
+        let state = WasiStateBuilder::new()
             .allow_tcp(true)
             .allow_udp(true)
             .allow_ip_name_lookup(true)
+            .config_vars(wasi_config_vars)
             .build();
-        let http = WasiHttpCtx::new();
-
-        let state = if let Some(config_vars) = wasi_config_vars {
-            WasiState {
-                ctx,
-                table,
-                http,
-                wasi_config_vars: config_vars,
-            }
-        } else {
-            WasiState {
-                ctx,
-                table,
-                http,
-                wasi_config_vars: wasmtime_wasi_config::WasiConfigVariables::new(),
-            }
-        };
-
         let mut store = Store::new(self.manager.engine.as_ref(), state);
 
         let instance = linker.instantiate_async(&mut store, component).await?;
