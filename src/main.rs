@@ -193,8 +193,17 @@ async fn main() -> Result<()> {
         }
     });
 
-    let grpc_client =
-        LifecycleManagerServiceClient::connect(format!("http://{}", grpc_addr)).await?;
+    let mut retries = 3;
+    let grpc_client = loop {
+        match LifecycleManagerServiceClient::connect(format!("http://{}", grpc_addr)).await {
+            Ok(client) => break client,
+            Err(_) if retries > 0 => {
+                retries -= 1;
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    };
     let grpc_client = Arc::new(tokio::sync::Mutex::new(grpc_client));
 
     let server = McpServer::new(grpc_client);
