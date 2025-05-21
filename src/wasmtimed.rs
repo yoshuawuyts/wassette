@@ -57,9 +57,9 @@ struct WasiStateBuilder {
 impl WasiStateBuilder {
     fn new() -> Self {
         let mut ctx_builder = WasiCtxBuilder::new();
-        ctx_builder.inherit_stdio();
+        ctx_builder.inherit_stdout();
+        ctx_builder.inherit_stderr();
         ctx_builder.inherit_args();
-        ctx_builder.inherit_env();
         ctx_builder.inherit_network();
 
         Self {
@@ -113,7 +113,7 @@ impl LifecycleManagerServiceImpl {
     async fn copy_to_dir(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let metadata = tokio::fs::metadata(&path).await?;
         if !metadata.is_file() {
-            return Err(std::io::Error::new(ErrorKind::Other, PATH_NOT_FILE_ERROR));
+            return Err(std::io::Error::other(PATH_NOT_FILE_ERROR));
         }
         // NOTE: We just checked this was a file by reading metadata so we can unwrap here
         let dest = self.plugin_dir.join(path.as_ref().file_name().unwrap());
