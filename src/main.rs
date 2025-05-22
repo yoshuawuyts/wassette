@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::{env, fs};
 
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 use lifecycle_proto::lifecycle::lifecycle_manager_service_client::LifecycleManagerServiceClient;
 use mcp_server::{
     handle_prompts_list, handle_resources_list, handle_tools_call, handle_tools_list, GrpcClient,
@@ -23,6 +24,24 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 mod wasmtimed;
 
 const BIND_ADDRESS: &str = "127.0.0.1:9001";
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Serve {
+        #[arg(long, default_value_t = get_component_dir().into_os_string().into_string().unwrap())]
+        plugin_dir: String,
+
+        #[arg(long)]
+        policy_file: Option<String>,
+    },
+}
 
 /// Get the default component directory path based on the OS
 fn get_component_dir() -> PathBuf {
@@ -166,57 +185,72 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let components_dir = get_component_dir();
+    let cli = Cli::parse();
 
-    if !components_dir.exists() {
-        fs::create_dir_all(&components_dir)?;
+    match &cli.command {
+        Commands::Serve {
+            plugin_dir,
+            policy_file,
+        } => {
+            let components_dir = PathBuf::from(plugin_dir);
+
+            if !components_dir.exists() {
+                fs::create_dir_all(&components_dir)?;
+            }
+
+            let grpc_addr = "[::1]:50051";
+            let daemon = wasmtimed::WasmtimeD::new(
+                grpc_addr.to_string(),
+                &components_dir,
+                policy_file.as_deref(),
+            )
+            .await?;
+
+            let daemon_shutdown_token = CancellationToken::new();
+            let daemon_token_clone = daemon_shutdown_token.clone();
+
+            tokio::spawn(async move {
+                let daemon_serve = daemon.serve();
+                tokio::select! {
+                    result = daemon_serve => {
+                        if let Err(e) = result {
+                            tracing::error!("Daemon error: {}", e);
+                        }
+                    }
+                    _ = daemon_token_clone.cancelled() => {
+                        tracing::info!("Daemon shutting down due to cancellation");
+                    }
+                }
+            });
+
+            let mut retries = 3;
+            let grpc_client = loop {
+                match LifecycleManagerServiceClient::connect(format!("http://{}", grpc_addr)).await
+                {
+                    Ok(client) => break client,
+                    Err(_) if retries > 0 => {
+                        retries -= 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            };
+            let grpc_client = Arc::new(tokio::sync::Mutex::new(grpc_client));
+
+            let server = McpServer::new(grpc_client);
+
+            tracing::info!("Starting MCP server on {}", BIND_ADDRESS);
+            let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
+                .await?
+                .with_service(move || server.clone());
+
+            tokio::signal::ctrl_c().await?;
+            ct.cancel();
+            daemon_shutdown_token.cancel();
+
+            tracing::info!("MCP server shutting down");
+        }
     }
 
-    // GRPC server address for wasmtimed
-    let grpc_addr = "[::1]:50051";
-    let daemon = wasmtimed::WasmtimeD::new(grpc_addr.to_string(), &components_dir).await?;
-
-    let daemon_shutdown_token = CancellationToken::new();
-    let daemon_token_clone = daemon_shutdown_token.clone();
-
-    tokio::spawn(async move {
-        let daemon_serve = daemon.serve();
-        tokio::select! {
-            result = daemon_serve => {
-                if let Err(e) = result {
-                    tracing::error!("Daemon error: {}", e);
-                }
-            }
-            _ = daemon_token_clone.cancelled() => {
-                tracing::info!("Daemon shutting down due to cancellation");
-            }
-        }
-    });
-
-    let mut retries = 3;
-    let grpc_client = loop {
-        match LifecycleManagerServiceClient::connect(format!("http://{}", grpc_addr)).await {
-            Ok(client) => break client,
-            Err(_) if retries > 0 => {
-                retries -= 1;
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            }
-            Err(e) => return Err(e.into()),
-        }
-    };
-    let grpc_client = Arc::new(tokio::sync::Mutex::new(grpc_client));
-
-    let server = McpServer::new(grpc_client);
-
-    tracing::info!("Starting MCP server on {}", BIND_ADDRESS);
-    let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
-        .await?
-        .with_service(move || server.clone());
-
-    tokio::signal::ctrl_c().await?;
-    ct.cancel();
-    daemon_shutdown_token.cancel();
-
-    tracing::info!("MCP server shutting down");
     Ok(())
 }

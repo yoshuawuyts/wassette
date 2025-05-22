@@ -15,6 +15,7 @@ lifecycle-manager = { path = "crates/lifecycle-manager" }
 lifecycle-proto = { path = "crates/lifecycle-proto" }
 mcp-sdk = "0.0.3"
 mcp-server = { path = "crates/mcp-server" }
+policy = { path = "crates/policy" }
 prost = "0.13"
 rmcp = "0.1.5"
 serde = "1.0"
@@ -34,9 +35,11 @@ tracing-test = "0.2"
 wasmtime = "32"
 wasmtime-wasi = "32"
 wasmtime-wasi-http = "32"
+wasmtime-wasi-config = "32"
 
 [dependencies]
 anyhow = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
 component2json = { workspace = true }
 lifecycle-manager = { workspace = true }
 lifecycle-proto = { workspace = true }
@@ -48,6 +51,7 @@ rmcp = { workspace = true, features = [
     "macros",
 ] }
 serde_json = { workspace = true }
+policy = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 tonic = { workspace = true, features = ["transport", "codegen", "prost"] }
@@ -56,6 +60,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
+wasmtime-wasi-config = { workspace = true }
 
 [[bin]]
 name = "mcp-wasmtime"

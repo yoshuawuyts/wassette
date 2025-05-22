@@ -17,6 +17,7 @@ use tonic::{Request, Response, Status};
 use wasmtime::component::Linker;
 use wasmtime::Store;
 use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi_config::{WasiConfig, WasiConfigVariables};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 const PATH_NOT_FILE_ERROR: &str = "Path is not a file";
@@ -25,6 +26,7 @@ struct WasiState {
     ctx: wasmtime_wasi::WasiCtx,
     table: wasmtime_wasi::ResourceTable,
     http: wasmtime_wasi_http::WasiHttpCtx,
+    wasi_config_vars: WasiConfigVariables,
 }
 
 impl wasmtime_wasi::IoView for WasiState {
@@ -45,17 +47,73 @@ impl WasiHttpView for WasiState {
     }
 }
 
+struct WasiStateBuilder {
+    ctx_builder: WasiCtxBuilder,
+    table: Option<wasmtime_wasi::ResourceTable>,
+    http: Option<wasmtime_wasi_http::WasiHttpCtx>,
+    config_vars: WasiConfigVariables,
+}
+
+impl WasiStateBuilder {
+    fn new() -> Self {
+        let mut ctx_builder = WasiCtxBuilder::new();
+        ctx_builder.inherit_stdout();
+        ctx_builder.inherit_stderr();
+        ctx_builder.inherit_args();
+        ctx_builder.inherit_network();
+
+        Self {
+            ctx_builder,
+            table: None,
+            http: None,
+            config_vars: WasiConfigVariables::new(),
+        }
+    }
+
+    fn allow_tcp(mut self, allow: bool) -> Self {
+        self.ctx_builder.allow_tcp(allow);
+        self
+    }
+
+    fn allow_udp(mut self, allow: bool) -> Self {
+        self.ctx_builder.allow_udp(allow);
+        self
+    }
+
+    fn allow_ip_name_lookup(mut self, allow: bool) -> Self {
+        self.ctx_builder.allow_ip_name_lookup(allow);
+        self
+    }
+
+    fn config_vars(mut self, config_vars: WasiConfigVariables) -> Self {
+        self.config_vars = config_vars;
+        self
+    }
+
+    fn build(self) -> WasiState {
+        let mut ctx_builder = self.ctx_builder;
+
+        WasiState {
+            ctx: ctx_builder.build(),
+            table: self.table.unwrap_or_default(),
+            http: self.http.unwrap_or_else(WasiHttpCtx::new),
+            wasi_config_vars: self.config_vars,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct LifecycleManagerServiceImpl {
     manager: Arc<LifecycleManager>,
     plugin_dir: PathBuf,
+    policy_file: Option<String>,
 }
 
 impl LifecycleManagerServiceImpl {
     async fn copy_to_dir(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let metadata = tokio::fs::metadata(&path).await?;
         if !metadata.is_file() {
-            return Err(std::io::Error::new(ErrorKind::Other, PATH_NOT_FILE_ERROR));
+            return Err(std::io::Error::other(PATH_NOT_FILE_ERROR));
         }
         // NOTE: We just checked this was a file by reading metadata so we can unwrap here
         let dest = self.plugin_dir.join(path.as_ref().file_name().unwrap());
@@ -71,20 +129,24 @@ impl LifecycleManagerServiceImpl {
         let mut linker = Linker::new(self.manager.engine.as_ref());
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
+        wasmtime_wasi_config::add_to_linker(&mut linker, |h: &mut WasiState| {
+            WasiConfig::from(&h.wasi_config_vars)
+        })?;
 
-        let table = wasmtime_wasi::ResourceTable::default();
-        let ctx = WasiCtxBuilder::new()
-            .inherit_stdio()
-            .inherit_args()
-            .inherit_env()
-            .inherit_network()
+        let wasi_config_vars = if let Some(policy_path) = &self.policy_file {
+            let env_vars = policy::load_policy(policy_path)?;
+
+            WasiConfigVariables::from_iter(env_vars)
+        } else {
+            WasiConfigVariables::new()
+        };
+
+        let state = WasiStateBuilder::new()
             .allow_tcp(true)
             .allow_udp(true)
             .allow_ip_name_lookup(true)
+            .config_vars(wasi_config_vars)
             .build();
-        let http = WasiHttpCtx::new();
-
-        let state = WasiState { ctx, table, http };
         let mut store = Store::new(self.manager.engine.as_ref(), state);
 
         let instance = linker.instantiate_async(&mut store, component).await?;
@@ -238,10 +300,15 @@ pub struct WasmtimeD {
     addr: String,
     manager: Arc<LifecycleManager>,
     plugin_dir: PathBuf,
+    policy_file: Option<String>,
 }
 
 impl WasmtimeD {
-    pub async fn new(addr: String, plugin_dir: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub async fn new(
+        addr: String,
+        plugin_dir: impl AsRef<Path>,
+        policy_file: Option<&str>,
+    ) -> anyhow::Result<Self> {
         let mut config = wasmtime::Config::new();
         config.wasm_component_model(true);
         config.async_support(true);
@@ -253,6 +320,7 @@ impl WasmtimeD {
             addr,
             manager,
             plugin_dir: plugin_dir.as_ref().to_path_buf(),
+            policy_file: policy_file.map(|s| s.to_string()),
         })
     }
 
@@ -261,6 +329,7 @@ impl WasmtimeD {
         let svc = LifecycleManagerServiceImpl {
             manager: self.manager,
             plugin_dir: self.plugin_dir,
+            policy_file: self.policy_file,
         };
 
         tracing::info!("Daemon listening on {}", addr);
