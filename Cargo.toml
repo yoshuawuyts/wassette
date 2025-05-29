@@ -15,7 +15,7 @@ lifecycle-manager = { path = "crates/lifecycle-manager" }
 lifecycle-proto = { path = "crates/lifecycle-proto" }
 mcp-sdk = "0.0.3"
 mcp-server = { path = "crates/mcp-server" }
-policy = { path = "crates/policy" }
+policy-mcp = { git = "https://github.com/semcp/policy-mcp-rs", branch = "main" }
 prost = "0.13"
 rmcp = "0.1.5"
 serde = "1.0"
@@ -51,7 +51,7 @@ rmcp = { workspace = true, features = [
     "macros",
 ] }
 serde_json = { workspace = true }
-policy = { workspace = true }
+policy-mcp = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 tonic = { workspace = true, features = ["transport", "codegen", "prost"] }
@@ -75,6 +75,8 @@ name = "fetch-runtime"
 path = "cmd/fetch-runtime.rs"
 
 [dev-dependencies]
+proptest = "1.4"
+temp-env = "0.3"
 reqwest = { version = "0.11", features = ["json"] }
 serde_json = { workspace = true }
 tempfile = "3.8"

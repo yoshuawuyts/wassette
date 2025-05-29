@@ -12,6 +12,7 @@ use lifecycle_proto::lifecycle::{
     ListComponentsRequest, ListComponentsResponse, LoadComponentRequest, LoadComponentResponse,
     UnloadComponentRequest, UnloadComponentResponse,
 };
+use policy_mcp::PolicyParser;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use wasmtime::component::Linker;
@@ -19,6 +20,9 @@ use wasmtime::Store;
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi_config::{WasiConfig, WasiConfigVariables};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+
+mod wasistate;
+use wasistate::{create_wasi_state_template_from_policy, WasiStateTemplate};
 
 const PATH_NOT_FILE_ERROR: &str = "Path is not a file";
 
@@ -47,58 +51,38 @@ impl WasiHttpView for WasiState {
     }
 }
 
-struct WasiStateBuilder {
-    ctx_builder: WasiCtxBuilder,
-    table: Option<wasmtime_wasi::ResourceTable>,
-    http: Option<wasmtime_wasi_http::WasiHttpCtx>,
-    config_vars: WasiConfigVariables,
-}
-
-impl WasiStateBuilder {
-    fn new() -> Self {
+impl WasiStateTemplate {
+    fn build(&self) -> anyhow::Result<WasiState> {
         let mut ctx_builder = WasiCtxBuilder::new();
-        ctx_builder.inherit_stdout();
-        ctx_builder.inherit_stderr();
+        if self.allow_stdout {
+            ctx_builder.inherit_stdout();
+        }
+        if self.allow_stderr {
+            ctx_builder.inherit_stderr();
+        }
         ctx_builder.inherit_args();
+        if self.allow_args {
+            ctx_builder.inherit_args();
+        }
         ctx_builder.inherit_network();
-
-        Self {
-            ctx_builder,
-            table: None,
-            http: None,
-            config_vars: WasiConfigVariables::new(),
+        ctx_builder.allow_tcp(self.network_perms.allow_tcp);
+        ctx_builder.allow_udp(self.network_perms.allow_udp);
+        ctx_builder.allow_ip_name_lookup(self.network_perms.allow_ip_name_lookup);
+        for preopened_dir in &self.preopened_dirs {
+            ctx_builder.preopened_dir(
+                preopened_dir.host_path.as_path(),
+                preopened_dir.guest_path.as_str(),
+                preopened_dir.dir_perms,
+                preopened_dir.file_perms,
+            )?;
         }
-    }
 
-    fn allow_tcp(mut self, allow: bool) -> Self {
-        self.ctx_builder.allow_tcp(allow);
-        self
-    }
-
-    fn allow_udp(mut self, allow: bool) -> Self {
-        self.ctx_builder.allow_udp(allow);
-        self
-    }
-
-    fn allow_ip_name_lookup(mut self, allow: bool) -> Self {
-        self.ctx_builder.allow_ip_name_lookup(allow);
-        self
-    }
-
-    fn config_vars(mut self, config_vars: WasiConfigVariables) -> Self {
-        self.config_vars = config_vars;
-        self
-    }
-
-    fn build(self) -> WasiState {
-        let mut ctx_builder = self.ctx_builder;
-
-        WasiState {
+        Ok(WasiState {
             ctx: ctx_builder.build(),
-            table: self.table.unwrap_or_default(),
-            http: self.http.unwrap_or_else(WasiHttpCtx::new),
-            wasi_config_vars: self.config_vars,
-        }
+            table: wasmtime_wasi::ResourceTable::default(),
+            http: WasiHttpCtx::new(),
+            wasi_config_vars: WasiConfigVariables::from_iter(self.config_vars.clone()),
+        })
     }
 }
 
@@ -106,10 +90,29 @@ impl WasiStateBuilder {
 struct LifecycleManagerServiceImpl {
     manager: Arc<LifecycleManager>,
     plugin_dir: PathBuf,
-    policy_file: Option<String>,
+    wasi_state_template: WasiStateTemplate,
 }
 
 impl LifecycleManagerServiceImpl {
+    fn new(
+        manager: Arc<LifecycleManager>,
+        plugin_dir: PathBuf,
+        policy_file: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let wasi_state_template = if let Some(policy_path) = policy_file {
+            let policy = PolicyParser::parse_file(policy_path)?;
+            create_wasi_state_template_from_policy(&policy, &plugin_dir)?
+        } else {
+            WasiStateTemplate::default()
+        };
+
+        Ok(Self {
+            manager,
+            plugin_dir,
+            wasi_state_template,
+        })
+    }
+
     async fn copy_to_dir(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let metadata = tokio::fs::metadata(&path).await?;
         if !metadata.is_file() {
@@ -133,20 +136,8 @@ impl LifecycleManagerServiceImpl {
             WasiConfig::from(&h.wasi_config_vars)
         })?;
 
-        let wasi_config_vars = if let Some(policy_path) = &self.policy_file {
-            let env_vars = policy::load_policy(policy_path)?;
-
-            WasiConfigVariables::from_iter(env_vars)
-        } else {
-            WasiConfigVariables::new()
-        };
-
-        let state = WasiStateBuilder::new()
-            .allow_tcp(true)
-            .allow_udp(true)
-            .allow_ip_name_lookup(true)
-            .config_vars(wasi_config_vars)
-            .build();
+        // Use the pre-built WASI state template
+        let state = self.wasi_state_template.build()?;
         let mut store = Store::new(self.manager.engine.as_ref(), state);
 
         let instance = linker.instantiate_async(&mut store, component).await?;
@@ -326,11 +317,11 @@ impl WasmtimeD {
 
     pub async fn serve(self) -> anyhow::Result<()> {
         let addr = self.addr.parse()?;
-        let svc = LifecycleManagerServiceImpl {
-            manager: self.manager,
-            plugin_dir: self.plugin_dir,
-            policy_file: self.policy_file,
-        };
+        let svc = LifecycleManagerServiceImpl::new(
+            self.manager,
+            self.plugin_dir,
+            self.policy_file.as_deref(),
+        )?;
 
         tracing::info!("Daemon listening on {}", addr);
         Server::builder()
