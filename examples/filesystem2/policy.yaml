@@ -1,0 +1,16 @@
+# file system access policy for mcp-wasmtime project
+# https://github.com/semcp/policy-mcp-rs
+version: "1.0"
+description: "Permission policy for filesystem access in mcp-wasmtime"
+permissions:
+  storage:
+    allow:
+      # Allow read access to the mcp-wasmtime project directory
+      - uri: "fs:///Users/jduffney/github/mcp-wasmtime"
+        access: ["read"]
+      # Allow read access to the user's home directory
+      - uri: "fs:///Users/jduffney"
+        access: ["read"]
+      # Allow read access to the root filesystem
+      - uri: "fs:///"
+        access: ["read"]
