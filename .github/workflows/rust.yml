@@ -75,7 +75,7 @@ jobs:
     - name: Run server
       run: |
         chmod +x ./mcp-wasmtime
-        RUST_LOG=debug ./mcp-wasmtime
+        RUST_LOG=debug ./mcp-wasmtime serve
       shell: bash
     - name: Run smoke test
       run: ./scripts/verify_components.sh
