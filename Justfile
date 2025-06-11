@@ -1,6 +1,5 @@
 test:
     cargo test --workspace -- --nocapture
-    cargo test --test integration_test -- --nocapture
 
 build mode="debug":
     mkdir -p bin
