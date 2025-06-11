@@ -189,7 +189,7 @@ impl LifecycleManager {
         let file = match scheme {
             "file" => self.load_file(reference).await?,
             "oci" => self.load_oci(reference).await?,
-            "http" | "https" => self.load_url(uri).await?,
+            "https" => self.load_url(uri).await?,
             _ => bail!("Unsupported component scheme: {}", scheme),
         };
 

@@ -98,3 +98,6 @@ oci-distribution = "0.11.0"
 futures-util = "0.3.30"
 rand = "0.9"
 bytes = "1"
+tokio-rustls = "0.26"
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
+rcgen = "0.13"

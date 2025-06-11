@@ -19,7 +19,9 @@ use mcp_wasmtime::wasmtimed;
 use oci_wasm::WasmClient;
 use tempfile::TempDir;
 use test_log::test;
-use testcontainers::{core::WaitFor, runners::AsyncRunner, ContainerAsync, Image};
+use testcontainers::core::WaitFor;
+use testcontainers::runners::AsyncRunner;
+use testcontainers::{ContainerAsync, Image};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use tonic::transport::Channel;
@@ -66,7 +68,7 @@ async fn wait_for_client(port: u16) -> Result<LifecycleManagerServiceClient<Chan
     let mut last_error = None;
 
     while retries > 0 {
-        let addr = format!("http://127.0.0.1:{}", port);
+        let addr = format!("https://127.0.0.1:{}", port);
         match Channel::from_shared(addr.clone())?.connect().await {
             Ok(channel) => return Ok(LifecycleManagerServiceClient::new(channel)),
             Err(e) => {
@@ -122,6 +124,12 @@ async fn cleanup_components(client: &mut LifecycleManagerServiceClient<Channel>)
 }
 
 async fn setup_daemon() -> Result<(LifecycleManagerServiceClient<Channel>, TempDir, u16)> {
+    setup_daemon_with_client(reqwest::Client::default()).await
+}
+
+async fn setup_daemon_with_client(
+    http_client: reqwest::Client,
+) -> Result<(LifecycleManagerServiceClient<Channel>, TempDir, u16)> {
     let port = find_open_port().await?;
     let addr = format!("127.0.0.1:{}", port);
     let tempdir = tempfile::tempdir()?;
@@ -133,7 +141,7 @@ async fn setup_daemon() -> Result<(LifecycleManagerServiceClient<Channel>, TempD
             protocol: oci_client::client::ClientProtocol::Http,
             ..Default::default()
         }),
-        reqwest::Client::default(),
+        http_client,
     )
     .await
     .context("Failed to create WasmtimeD")?;
@@ -239,42 +247,66 @@ async fn test_fetch_component_workflow() -> Result<()> {
     Ok(())
 }
 
-// Helper function to start a simple HTTP server
-async fn start_http_server(
+async fn start_https_server(
     wasm_content: Vec<u8>,
 ) -> Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use tokio_rustls::{rustls, TlsAcceptor};
+
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
 
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
+    let cert_der = CertificateDer::from(cert.cert.der().clone());
+    let key_bytes = cert.key_pair.serialize_der();
+    let key_der = PrivateKeyDer::try_from(key_bytes)
+        .map_err(|e| anyhow::anyhow!("Failed to convert private key: {}", e))?;
+
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert_der], key_der)?;
+
+    let acceptor = TlsAcceptor::from(Arc::new(config));
     let wasm_bytes = Arc::new(wasm_content);
 
     let handle = tokio::spawn(async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
-            let io = TokioIo::new(stream);
+            let acceptor = acceptor.clone();
             let wasm_bytes = wasm_bytes.clone();
 
-            let service = service_fn(move |req: Request<hyper::body::Incoming>| {
-                let wasm_bytes = wasm_bytes.clone();
-                async move {
-                    if req.uri().path() != "/fetch_rs.wasm" {
-                        return Ok::<_, hyper::Error>(
-                            Response::builder()
-                                .status(404)
-                                .body(Full::new(Bytes::from("Not Found")))
-                                .unwrap(),
-                        );
-                    }
-                    let response = Response::builder()
-                        .status(200)
-                        .header("Content-Type", "application/wasm")
-                        .body(Full::new(Bytes::from(wasm_bytes.as_ref().clone())))
-                        .unwrap();
-                    Ok::<_, hyper::Error>(response)
-                }
-            });
-
             tokio::spawn(async move {
+                let tls_stream = match acceptor.accept(stream).await {
+                    Ok(tls_stream) => tls_stream,
+                    Err(e) => {
+                        eprintln!("TLS handshake failed: {:?}", e);
+                        return;
+                    }
+                };
+
+                let io = TokioIo::new(tls_stream);
+                let service = service_fn(move |req: Request<hyper::body::Incoming>| {
+                    let wasm_bytes = wasm_bytes.clone();
+                    async move {
+                        if req.uri().path() != "/fetch_rs.wasm" {
+                            return Ok::<_, hyper::Error>(
+                                Response::builder()
+                                    .status(404)
+                                    .body(Full::new(Bytes::from("Not Found")))
+                                    .unwrap(),
+                            );
+                        }
+                        let response = Response::builder()
+                            .status(200)
+                            .header("Content-Type", "application/wasm")
+                            .body(Full::new(Bytes::from(wasm_bytes.as_ref().clone())))
+                            .unwrap();
+                        Ok::<_, hyper::Error>(response)
+                    }
+                });
+
                 if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
                     eprintln!("Error serving connection: {:?}", err);
                 }
@@ -286,8 +318,13 @@ async fn start_http_server(
 }
 
 #[test(tokio::test)]
-async fn test_load_component_from_http() -> Result<()> {
-    let (mut client, _tempdir, _port) = setup_daemon().await?;
+async fn test_load_component_from_https() -> Result<()> {
+    // Create HTTP client that ignores certificate validation for testing
+    let http_client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()?;
+
+    let (mut client, _tempdir, _port) = setup_daemon_with_client(http_client).await?;
 
     // Build the test component
     let component_path = build_example_component().await?;
@@ -295,11 +332,11 @@ async fn test_load_component_from_http() -> Result<()> {
     // Read the component bytes
     let wasm_bytes = tokio::fs::read(&component_path).await?;
 
-    // Start HTTP server
-    let (addr, _server_handle) = start_http_server(wasm_bytes).await?;
+    // Start HTTPS server
+    let (addr, _server_handle) = start_https_server(wasm_bytes).await?;
 
     // Load from HTTP
-    let http_url = format!("http://{}/fetch_rs.wasm", addr);
+    let http_url = format!("https://{}/fetch_rs.wasm", addr);
     let load_request = tonic::Request::new(LoadComponentRequest { path: http_url });
     client.load_component(load_request).await?;
 
@@ -392,14 +429,19 @@ async fn test_load_component_invalid_scheme() -> Result<()> {
 }
 
 #[test(tokio::test)]
-async fn test_load_component_http_404() -> Result<()> {
-    let (mut client, _tempdir, _port) = setup_daemon().await?;
+async fn test_load_component_https_404() -> Result<()> {
+    // Create HTTP client that ignores certificate validation for testing
+    let http_client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()?;
 
-    // Start HTTP server
-    let (addr, _server_handle) = start_http_server(Vec::new()).await?;
+    let (mut client, _tempdir, _port) = setup_daemon_with_client(http_client).await?;
+
+    // Start HTTPS server
+    let (addr, _server_handle) = start_https_server(Vec::new()).await?;
 
     // Try to load from HTTP with 404
-    let http_url = format!("http://{}/nonexistent.wasm", addr);
+    let http_url = format!("https://{}/nonexistent.wasm", addr);
     let load_request = tonic::Request::new(LoadComponentRequest { path: http_url });
 
     let result = client.load_component(load_request).await;
