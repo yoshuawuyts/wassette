@@ -1,14 +1,14 @@
+use std::env;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::{env, fs};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use lifecycle_proto::lifecycle::lifecycle_manager_service_client::LifecycleManagerServiceClient;
 use mcp_server::{
-    handle_prompts_list, handle_resources_list, handle_tools_call, handle_tools_list, GrpcClient,
+    handle_prompts_list, handle_resources_list, handle_tools_call, handle_tools_list,
+    LifecycleManagerRef,
 };
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, ErrorData, ListPromptsResult, ListResourcesResult,
@@ -17,11 +17,9 @@ use rmcp::model::{
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::SseServer;
 use rmcp::ServerHandler;
-use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
-
-mod weld;
+use weld::LifecycleManager;
 
 const BIND_ADDRESS: &str = "127.0.0.1:9001";
 
@@ -71,14 +69,14 @@ fn get_component_dir() -> PathBuf {
 
 #[derive(Clone)]
 pub struct McpServer {
-    grpc_client: GrpcClient,
+    lifecycle_manager: LifecycleManagerRef,
     peer: Option<rmcp::service::Peer<RoleServer>>,
 }
 
 impl McpServer {
-    pub fn new(grpc_client: GrpcClient) -> Self {
+    pub fn new(lifecycle_manager: LifecycleManagerRef) -> Self {
         Self {
-            grpc_client,
+            lifecycle_manager,
             peer: None,
         }
     }
@@ -106,8 +104,8 @@ impl ServerHandler for McpServer {
         let peer_clone = self.peer.clone();
 
         Box::pin(async move {
-            // Pass the peer to handle_tools_call for tool list change notifications
-            let result = handle_tools_call(params, self.grpc_client.clone(), peer_clone).await;
+            let result =
+                handle_tools_call(params, self.lifecycle_manager.clone(), peer_clone).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
                     ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
@@ -123,7 +121,8 @@ impl ServerHandler for McpServer {
         _ctx: RequestContext<RoleServer>,
     ) -> Pin<Box<dyn Future<Output = Result<ListToolsResult, ErrorData>> + Send + 'a>> {
         Box::pin(async move {
-            let result = handle_tools_list(serde_json::Value::Null, self.grpc_client.clone()).await;
+            let result =
+                handle_tools_list(serde_json::Value::Null, self.lifecycle_manager.clone()).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
                     ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
@@ -198,50 +197,10 @@ async fn main() -> Result<()> {
         } => {
             let components_dir = PathBuf::from(plugin_dir);
 
-            if !components_dir.exists() {
-                fs::create_dir_all(&components_dir)?;
-            }
+            let lifecycle_manager =
+                Arc::new(LifecycleManager::create(&components_dir, policy_file.as_deref()).await?);
 
-            let grpc_addr = "[::1]:50051";
-            let daemon = weld::Weld::new(
-                grpc_addr.to_string(),
-                &components_dir,
-                policy_file.as_deref(),
-            )
-            .await?;
-
-            let daemon_shutdown_token = CancellationToken::new();
-            let daemon_token_clone = daemon_shutdown_token.clone();
-
-            tokio::spawn(async move {
-                let daemon_serve = daemon.serve();
-                tokio::select! {
-                    result = daemon_serve => {
-                        if let Err(e) = result {
-                            tracing::error!("Daemon error: {}", e);
-                        }
-                    }
-                    _ = daemon_token_clone.cancelled() => {
-                        tracing::info!("Daemon shutting down due to cancellation");
-                    }
-                }
-            });
-
-            let mut retries = 3;
-            let grpc_client = loop {
-                match LifecycleManagerServiceClient::connect(format!("http://{}", grpc_addr)).await
-                {
-                    Ok(client) => break client,
-                    Err(_) if retries > 0 => {
-                        retries -= 1;
-                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            };
-            let grpc_client = Arc::new(tokio::sync::Mutex::new(grpc_client));
-
-            let server = McpServer::new(grpc_client);
+            let server = McpServer::new(lifecycle_manager);
 
             tracing::info!("Starting MCP server on {}", BIND_ADDRESS);
             let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
@@ -250,7 +209,6 @@ async fn main() -> Result<()> {
 
             tokio::signal::ctrl_c().await?;
             ct.cancel();
-            daemon_shutdown_token.cancel();
 
             tracing::info!("MCP server shutting down");
         }

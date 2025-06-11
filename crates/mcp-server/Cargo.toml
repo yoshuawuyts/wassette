@@ -3,16 +3,12 @@ name = "mcp-server"
 version = "0.1.0"
 edition = "2021"
 
-[build-dependencies]
-tonic-build = { workspace = true, features = ["prost"] }
-
 [dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 rmcp = { workspace = true }
-lifecycle-proto = { workspace = true }
-tonic = { workspace = true }
+weld = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 
 [dev-dependencies]
