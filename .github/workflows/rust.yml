@@ -32,11 +32,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: extractions/setup-just@v3
     - run: ./scripts/install-protobuf.sh
       shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@v1
     - run: rustup target add wasm32-wasip2
     - name: Build
-      run: cargo build --verbose --workspace
+      run: just build
     - name: Run tests
-      run: cargo test --verbose --workspace
+      run: just test
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mcp-wasmtime
+        path: bin/mcp-wasmtime
+  
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: extractions/setup-just@v3
+    - run: ./scripts/install-protobuf.sh
+      shell: bash
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
+    - run: rustup target add wasm32-wasip2
+    - name: Build
+      run: just build-examples
+    - name: Upload wasm
+      uses: actions/upload-artifact@v4
+      with:
+        name: examples
+        path: bin

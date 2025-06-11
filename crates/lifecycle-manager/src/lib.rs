@@ -735,13 +735,13 @@ mod tests {
         let component_path = build_example_component().await?;
 
         let (_, res) = manager
-            .load_component(component_path.to_str().unwrap())
+            .load_component(&format!("file://{}", component_path.to_str().unwrap()))
             .await?;
 
         assert_eq!(LoadResult::New, res, "Should have been a new component");
 
         let (_, res) = manager
-            .load_component(component_path.to_str().unwrap())
+            .load_component(&format!("file://{}", component_path.to_str().unwrap()))
             .await?;
 
         assert_eq!(

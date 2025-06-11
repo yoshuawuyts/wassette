@@ -23,3 +23,5 @@ lto = true
 package = "component:filesystem"
 
 [package.metadata.component.dependencies]
+
+[workspace]
