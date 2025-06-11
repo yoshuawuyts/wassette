@@ -15,7 +15,6 @@ use lifecycle_proto::lifecycle::{
     CallComponentRequest, GetComponentRequest, ListComponentsRequest, LoadComponentRequest,
     UnloadComponentRequest,
 };
-use mcp_wasmtime::wasmtimed;
 use oci_wasm::WasmClient;
 use tempfile::TempDir;
 use test_log::test;
@@ -25,6 +24,7 @@ use testcontainers::{ContainerAsync, Image};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use tonic::transport::Channel;
+use weld_mcp_server::weld;
 
 const DOCKER_REGISTRY_PORT: u16 = 5000;
 
@@ -133,7 +133,7 @@ async fn setup_daemon_with_client(
     let port = find_open_port().await?;
     let addr = format!("127.0.0.1:{}", port);
     let tempdir = tempfile::tempdir()?;
-    let daemon = wasmtimed::WasmtimeD::new_with_clients(
+    let daemon = weld::Weld::new_with_clients(
         addr.clone(),
         &tempdir,
         None,
@@ -144,7 +144,7 @@ async fn setup_daemon_with_client(
         http_client,
     )
     .await
-    .context("Failed to create WasmtimeD")?;
+    .context("Failed to create Weld")?;
 
     tokio::spawn(async move {
         if let Err(e) = daemon.serve().await {

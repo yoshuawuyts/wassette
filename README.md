@@ -1,4 +1,4 @@
-# mcp-wasmtime
+# weld-mcp-server
 
 ##  🚩 Purpose
 

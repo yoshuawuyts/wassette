@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
 
     let component = Arc::new(Component::from_file(
         &engine,
-        "/Users/mossaka/Developer/mossaka/mcp-wasmtime/examples/filesystem2/filesystem2.wasm",
+        "examples/filesystem/target/wasm32-wasip2/release/filesystem.wasm",
     )?);
 
     let schema = component2json::component_exports_to_json_schema(&component, &engine, true);

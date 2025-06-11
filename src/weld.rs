@@ -251,13 +251,13 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
     }
 }
 
-pub struct WasmtimeD {
+pub struct Weld {
     addr: String,
     manager: Arc<LifecycleManager>,
     wasi_state_template: WasiStateTemplate,
 }
 
-impl WasmtimeD {
+impl Weld {
     pub async fn new(
         addr: String,
         plugin_dir: impl AsRef<Path>,

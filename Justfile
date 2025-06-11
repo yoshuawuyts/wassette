@@ -4,7 +4,7 @@ test:
 build mode="debug":
     mkdir -p bin
     cargo build --workspace {{ if mode == "release" { "--release" } else { "" } }}
-    cp target/{{ mode }}/mcp-wasmtime bin/
+    cp target/{{ mode }}/weld-mcp-server bin/
     
 build-examples mode="debug":
     mkdir -p bin
@@ -20,15 +20,15 @@ clean:
     rm -rf bin
 
 run RUST_LOG='info':
-    RUST_LOG={{RUST_LOG}} cargo run --bin mcp-wasmtime serve --policy-file policy.yaml
+    RUST_LOG={{RUST_LOG}} cargo run --bin weld-mcp-server serve --policy-file policy.yaml
 
 run-filesystem RUST_LOG='info':
-    RUST_LOG={{RUST_LOG}} cargo run --bin mcp-wasmtime serve --plugin-dir ./examples/filesystem2 --policy-file ./examples/filesystem2/policy.yaml
+    RUST_LOG={{RUST_LOG}} cargo run --bin weld-mcp-server serve --plugin-dir ./examples/filesystem2 --policy-file ./examples/filesystem2/policy.yaml
 
 # Requires an openweather API key in the environment variable OPENWEATHER_API_KEY
 run-get-weather RUST_LOG='info':
-    RUST_LOG={{RUST_LOG}} cargo run --bin mcp-wasmtime serve --plugin-dir ./examples/get-weather --policy-file ./examples/get-weather/policy.yaml
+    RUST_LOG={{RUST_LOG}} cargo run --bin weld-mcp-server serve --plugin-dir ./examples/get-weather --policy-file ./examples/get-weather/policy.yaml
 
 run-fetch-rs RUST_LOG='info':
-    RUST_LOG={{RUST_LOG}} cargo run --bin mcp-wasmtime serve --plugin-dir ./examples/fetch-rs --policy-file ./examples/fetch-rs/policy.yaml
+    RUST_LOG={{RUST_LOG}} cargo run --bin weld-mcp-server serve --plugin-dir ./examples/fetch-rs --policy-file ./examples/fetch-rs/policy.yaml
 
