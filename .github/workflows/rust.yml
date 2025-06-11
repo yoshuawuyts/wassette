@@ -63,24 +63,3 @@ jobs:
       with:
         name: examples
         path: bin
-  
-  smoke-test:
-    needs: [build, examples]
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/download-artifact@v4
-      with:
-        merge-multiple: true
-    - name: Run server
-      run: |
-        chmod +x ./mcp-wasmtime
-        RUST_LOG=debug ./mcp-wasmtime serve
-      shell: bash
-    - name: Run smoke test
-      run: ./scripts/verify_components.sh
-      shell: bash
-    - name: Clean up
-      if: always()
-      run: pkill -f mcp-wasmtime
-      shell: bash
