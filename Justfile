@@ -23,7 +23,7 @@ run RUST_LOG='info':
     RUST_LOG={{RUST_LOG}} cargo run --bin weld-mcp-server serve --policy-file policy.yaml
 
 run-filesystem RUST_LOG='info':
-    RUST_LOG={{RUST_LOG}} cargo run --bin weld-mcp-server serve --plugin-dir ./examples/filesystem2 --policy-file ./examples/filesystem2/policy.yaml
+    RUST_LOG={{RUST_LOG}} cargo run --bin weld-mcp-server serve --plugin-dir ./examples/filesystem --policy-file ./examples/filesystem/policy.yaml
 
 # Requires an openweather API key in the environment variable OPENWEATHER_API_KEY
 run-get-weather RUST_LOG='info':
