@@ -48,12 +48,6 @@ jobs:
         path: bin/mcp-wasmtime
   
   examples:
-    strategy:
-      matrix:
-        example:
-          - filesystem
-          - fetch-rs
-          - get-weather
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -64,15 +58,11 @@ jobs:
     - run: rustup target add wasm32-wasip2
     - name: Build
       run: just build-examples
-    - name: Set binary name
-      run: |
-        binaryName=$(echo ${{ matrix.example }} | tr '-' '_')
-        echo "binaryName=${binaryName}" >> $GITHUB_ENV
     - name: Upload wasm
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.binaryName }}.wasm
-        path: bin/${{ env.binaryName }}.wasm
+        name: examples
+        path: bin
   
   smoke-test:
     needs: [build, examples]
