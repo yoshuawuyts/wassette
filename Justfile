@@ -8,6 +8,7 @@ build mode="debug":
     cp target/{{ mode }}/mcp-wasmtime bin/
     
 build-examples mode="debug":
+    mkdir -p bin
     cargo build --target wasm32-wasip2 {{ if mode == "release" { "--release" } else { "" } }} --manifest-path examples/fetch-rs/Cargo.toml
     cargo build --target wasm32-wasip2 {{ if mode == "release" { "--release" } else { "" } }} --manifest-path examples/filesystem/Cargo.toml
     cd examples/get-weather && just build
