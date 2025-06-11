@@ -15,8 +15,11 @@ lifecycle-manager = { path = "crates/lifecycle-manager" }
 lifecycle-proto = { path = "crates/lifecycle-proto" }
 mcp-sdk = "0.0.3"
 mcp-server = { path = "crates/mcp-server" }
+oci-client = "0.15"
+oci-wasm = "0.3"
 policy-mcp = { git = "https://github.com/semcp/policy-mcp-rs", branch = "main" }
 prost = "0.13"
+reqwest = "0.12"
 rmcp = "0.1.5"
 serde = "1.0"
 serde_json = "1.0"
@@ -45,6 +48,8 @@ lifecycle-manager = { workspace = true }
 lifecycle-proto = { workspace = true }
 mcp-sdk = { workspace = true }
 mcp-server = { workspace = true }
+oci-client = { workspace = true }
+reqwest = { workspace = true }
 rmcp = { workspace = true, features = [
     "server",
     "transport-sse-server",
@@ -77,9 +82,22 @@ path = "cmd/fetch-runtime.rs"
 [dev-dependencies]
 proptest = "1.4"
 temp-env = "0.3"
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 serde_json = { workspace = true }
 tempfile = "3.8"
 test-log = { version = "0.2", features = ["trace"] }
 tokio-test = "0.4"
 tracing-test = "0.2"
+testcontainers = "0.24"
+oci-wasm = "0.3"
+oci-client = "0.15"
+hyper = { version = "1.0", features = ["server", "http1"] }
+http-body-util = "0.1"
+hyper-util = "0.1"
+oci-distribution = "0.11.0"
+futures-util = "0.3.30"
+rand = "0.9"
+bytes = "1"
+tokio-rustls = "0.26"
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
+rcgen = "0.13"

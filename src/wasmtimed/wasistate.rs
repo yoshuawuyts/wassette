@@ -148,7 +148,6 @@ pub fn calculate_permissions(
 mod tests {
     use policy_mcp::{AccessType, PolicyParser};
     use proptest::prelude::*;
-    use temp_env;
     use tempfile::TempDir;
 
     use super::*;

@@ -1,5 +1,4 @@
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
@@ -23,8 +22,6 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 mod wasistate;
 use wasistate::{create_wasi_state_template_from_policy, WasiStateTemplate};
-
-const PATH_NOT_FILE_ERROR: &str = "Path is not a file";
 
 struct WasiState {
     ctx: wasmtime_wasi::WasiCtx,
@@ -89,38 +86,18 @@ impl WasiStateTemplate {
 #[derive(Clone)]
 struct LifecycleManagerServiceImpl {
     manager: Arc<LifecycleManager>,
-    plugin_dir: PathBuf,
     wasi_state_template: WasiStateTemplate,
 }
 
 impl LifecycleManagerServiceImpl {
     fn new(
         manager: Arc<LifecycleManager>,
-        plugin_dir: PathBuf,
-        policy_file: Option<&str>,
+        wasi_state_template: WasiStateTemplate,
     ) -> anyhow::Result<Self> {
-        let wasi_state_template = if let Some(policy_path) = policy_file {
-            let policy = PolicyParser::parse_file(policy_path)?;
-            create_wasi_state_template_from_policy(&policy, &plugin_dir)?
-        } else {
-            WasiStateTemplate::default()
-        };
-
         Ok(Self {
             manager,
-            plugin_dir,
             wasi_state_template,
         })
-    }
-
-    async fn copy_to_dir(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
-        let metadata = tokio::fs::metadata(&path).await?;
-        if !metadata.is_file() {
-            return Err(std::io::Error::other(PATH_NOT_FILE_ERROR));
-        }
-        // NOTE: We just checked this was a file by reading metadata so we can unwrap here
-        let dest = self.plugin_dir.join(path.as_ref().file_name().unwrap());
-        tokio::fs::copy(path, dest).await.map(|_| ())
     }
 
     async fn execute_component_call(
@@ -183,19 +160,6 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
         request: Request<LoadComponentRequest>,
     ) -> Result<Response<LoadComponentResponse>, Status> {
         let req = request.into_inner();
-        // Load the request file into the directory
-        if let Err(e) = self.copy_to_dir(&req.path).await {
-            let status = match e.kind() {
-                ErrorKind::NotFound => {
-                    Status::invalid_argument(format!("No file found at path {}", req.path))
-                }
-                ErrorKind::Other if e.to_string().contains(PATH_NOT_FILE_ERROR) => {
-                    Status::invalid_argument(format!("Given path {} is not a file", req.path))
-                }
-                _ => Status::internal(e.to_string()),
-            };
-            return Err(status);
-        }
         let (id, _) = self
             .manager
             .load_component(&req.path)
@@ -290,8 +254,7 @@ impl LifecycleManagerService for LifecycleManagerServiceImpl {
 pub struct WasmtimeD {
     addr: String,
     manager: Arc<LifecycleManager>,
-    plugin_dir: PathBuf,
-    policy_file: Option<String>,
+    wasi_state_template: WasiStateTemplate,
 }
 
 impl WasmtimeD {
@@ -300,28 +263,50 @@ impl WasmtimeD {
         plugin_dir: impl AsRef<Path>,
         policy_file: Option<&str>,
     ) -> anyhow::Result<Self> {
+        Self::new_with_clients(
+            addr,
+            plugin_dir,
+            policy_file,
+            oci_client::Client::default(),
+            reqwest::Client::default(),
+        )
+        .await
+    }
+
+    /// Same as `new`, but allows passing in custom clients for OCI and HTTP.
+    // This is mostly for testing purposes, but if we export publicly would be useful as well
+    #[allow(dead_code)]
+    pub async fn new_with_clients(
+        addr: String,
+        plugin_dir: impl AsRef<Path>,
+        policy_file: Option<&str>,
+        oci_cli: oci_client::Client,
+        http_client: reqwest::Client,
+    ) -> anyhow::Result<Self> {
+        let wasi_state_template = if let Some(policy_path) = policy_file {
+            let policy = PolicyParser::parse_file(policy_path)?;
+            create_wasi_state_template_from_policy(&policy, plugin_dir.as_ref())?
+        } else {
+            WasiStateTemplate::default()
+        };
         let mut config = wasmtime::Config::new();
         config.wasm_component_model(true);
         config.async_support(true);
         let engine = Arc::new(wasmtime::Engine::new(&config)?);
-
-        let manager = Arc::new(LifecycleManager::new(engine, &plugin_dir).await?);
+        let manager = Arc::new(
+            LifecycleManager::new_with_clients(engine, plugin_dir, oci_cli, http_client).await?,
+        );
 
         Ok(Self {
             addr,
             manager,
-            plugin_dir: plugin_dir.as_ref().to_path_buf(),
-            policy_file: policy_file.map(|s| s.to_string()),
+            wasi_state_template,
         })
     }
 
     pub async fn serve(self) -> anyhow::Result<()> {
         let addr = self.addr.parse()?;
-        let svc = LifecycleManagerServiceImpl::new(
-            self.manager,
-            self.plugin_dir,
-            self.policy_file.as_deref(),
-        )?;
+        let svc = LifecycleManagerServiceImpl::new(self.manager, self.wasi_state_template)?;
 
         tracing::info!("Daemon listening on {}", addr);
         Server::builder()
