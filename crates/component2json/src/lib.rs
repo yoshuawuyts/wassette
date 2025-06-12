@@ -274,14 +274,6 @@ fn gather_exported_functions(
     }
 }
 
-fn object_to_val(obj: &Map<String, Value>) -> Result<Val, ValError> {
-    let mut fields = Vec::new();
-    for (k, v) in obj {
-        fields.push((k.clone(), json_to_val(v)?));
-    }
-    Ok(Val::Record(fields))
-}
-
 pub fn component_exports_to_json_schema(
     component: &Component,
     engine: &Engine,
@@ -301,49 +293,6 @@ pub fn component_exports_to_json_schema(
     }
 
     json!({ "tools": tools_array })
-}
-
-/// Parses a single `serde_json::Value` into one `Val`.
-pub fn json_to_val(value: &Value) -> Result<Val, ValError> {
-    match value {
-        Value::Null => Ok(Val::Option(None)),
-        Value::Bool(b) => Ok(Val::Bool(*b)),
-        Value::Number(num) => {
-            if let Some(i) = num.as_i64() {
-                Ok(Val::S64(i))
-            } else if let Some(f) = num.as_f64() {
-                Ok(Val::Float64(f))
-            } else {
-                Err(ValError::NumberError(format!("{num:?}")))
-            }
-        }
-        Value::String(s) => Ok(Val::String(s.clone())),
-        Value::Array(arr) => {
-            let mut vals = Vec::new();
-            for item in arr {
-                vals.push(json_to_val(item)?);
-            }
-            Ok(Val::List(vals))
-        }
-        Value::Object(obj) => object_to_val(obj),
-    }
-}
-
-pub fn json_to_vals(value: &Value) -> Result<Vec<Val>, ValError> {
-    match value {
-        Value::Object(obj) => {
-            let mut results = Vec::new();
-            for (_, v) in obj {
-                let subval = json_to_val(v)?;
-                results.push(subval);
-            }
-            Ok(results)
-        }
-        _ => {
-            let single = json_to_val(value)?;
-            Ok(vec![single])
-        }
-    }
 }
 
 pub fn vals_to_json(vals: &[Val]) -> Value {
@@ -431,130 +380,336 @@ fn val_to_json(val: &Val) -> Value {
     }
 }
 
+pub fn json_to_val_with_type(value: &Value, ty: &Type) -> Result<Val, ValError> {
+    match ty {
+        Type::Bool => match value {
+            Value::Bool(b) => Ok(Val::Bool(*b)),
+            _ => Err(ValError::ShapeError("bool", format!("{value:?}"))),
+        },
+        Type::S8 => match value {
+            Value::Number(n) => n
+                .as_i64()
+                .and_then(|i| i8::try_from(i).ok())
+                .map(Val::S8)
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("s8", format!("{value:?}"))),
+        },
+        Type::S16 => match value {
+            Value::Number(n) => n
+                .as_i64()
+                .and_then(|i| i16::try_from(i).ok())
+                .map(Val::S16)
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("s16", format!("{value:?}"))),
+        },
+        Type::S32 => match value {
+            Value::Number(n) => n
+                .as_i64()
+                .and_then(|i| i32::try_from(i).ok())
+                .map(Val::S32)
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("s32", format!("{value:?}"))),
+        },
+        Type::S64 => match value {
+            Value::Number(n) => n
+                .as_i64()
+                .map(Val::S64)
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("s64", format!("{value:?}"))),
+        },
+        Type::U8 => match value {
+            Value::Number(n) => n
+                .as_u64()
+                .and_then(|i| u8::try_from(i).ok())
+                .map(Val::U8)
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("u8", format!("{value:?}"))),
+        },
+        Type::U16 => match value {
+            Value::Number(n) => n
+                .as_u64()
+                .and_then(|i| u16::try_from(i).ok())
+                .map(Val::U16)
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("u16", format!("{value:?}"))),
+        },
+        Type::U32 => match value {
+            Value::Number(n) => n
+                .as_u64()
+                .and_then(|i| u32::try_from(i).ok())
+                .map(Val::U32)
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("u32", format!("{value:?}"))),
+        },
+        Type::U64 => match value {
+            Value::Number(n) => n
+                .as_u64()
+                .map(Val::U64)
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("u64", format!("{value:?}"))),
+        },
+        Type::Float32 => match value {
+            Value::Number(n) => n
+                .as_f64()
+                .map(|f| Val::Float32(f as f32))
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("float32", format!("{value:?}"))),
+        },
+        Type::Float64 => match value {
+            Value::Number(n) => n
+                .as_f64()
+                .map(Val::Float64)
+                .ok_or_else(|| ValError::NumberError(format!("{n:?}"))),
+            _ => Err(ValError::ShapeError("float64", format!("{value:?}"))),
+        },
+        Type::Char => match value {
+            Value::String(s) => {
+                if s.chars().count() == 1 {
+                    Ok(Val::Char(s.chars().next().unwrap()))
+                } else {
+                    Err(ValError::InvalidChar(s.clone()))
+                }
+            }
+            _ => Err(ValError::ShapeError("char", format!("{value:?}"))),
+        },
+        Type::String => match value {
+            Value::String(s) => Ok(Val::String(s.clone())),
+            _ => Err(ValError::ShapeError("string", format!("{value:?}"))),
+        },
+        Type::List(list_handle) => match value {
+            Value::Array(arr) => {
+                let mut vals = Vec::new();
+                for item in arr {
+                    vals.push(json_to_val_with_type(item, &list_handle.ty())?);
+                }
+                Ok(Val::List(vals))
+            }
+            _ => Err(ValError::ShapeError("list", format!("{value:?}"))),
+        },
+        Type::Record(r) => match value {
+            Value::Object(obj) => {
+                let mut fields = Vec::<(String, Val)>::new();
+                for field in r.fields() {
+                    let value = obj.get(&*field.name).ok_or_else(|| {
+                        ValError::ShapeError("record", format!("missing field {}", field.name))
+                    })?;
+                    fields.push((
+                        field.name.to_string(),
+                        json_to_val_with_type(value, &field.ty)?,
+                    ));
+                }
+                Ok(Val::Record(fields))
+            }
+            _ => Err(ValError::ShapeError("record", format!("{value:?}"))),
+        },
+        Type::Tuple(tup) => match value {
+            Value::Array(arr) => {
+                let types: Vec<_> = tup.types().collect();
+                if arr.len() != types.len() {
+                    return Err(ValError::ShapeError(
+                        "tuple",
+                        format!("expected {} items, got {}", types.len(), arr.len()),
+                    ));
+                }
+                let mut items = Vec::new();
+                for (value, ty) in arr.iter().zip(types) {
+                    items.push(json_to_val_with_type(value, &ty)?);
+                }
+                Ok(Val::Tuple(items))
+            }
+            _ => Err(ValError::ShapeError("tuple", format!("{value:?}"))),
+        },
+        Type::Variant(variant_handle) => match value {
+            Value::Object(obj) => {
+                let tag = obj
+                    .get("tag")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ValError::ShapeError("variant", "missing tag".to_string()))?;
+
+                let case = variant_handle
+                    .cases()
+                    .find(|c| c.name == tag)
+                    .ok_or_else(|| ValError::UnknownShape(obj.clone()))?;
+
+                let payload = if let Some(payload_ty) = &case.ty {
+                    let val = obj.get("val").ok_or_else(|| {
+                        ValError::ShapeError("variant", "missing val".to_string())
+                    })?;
+                    Some(Box::new(json_to_val_with_type(val, payload_ty)?))
+                } else {
+                    None
+                };
+
+                Ok(Val::Variant(tag.to_string(), payload))
+            }
+            _ => Err(ValError::ShapeError("variant", format!("{value:?}"))),
+        },
+        Type::Enum(enum_handle) => match value {
+            Value::String(s) => {
+                if enum_handle.names().any(|name| name == s) {
+                    Ok(Val::Enum(s.clone()))
+                } else {
+                    Err(ValError::ShapeError(
+                        "enum",
+                        format!("invalid enum value: {}", s),
+                    ))
+                }
+            }
+            _ => Err(ValError::ShapeError("enum", format!("{value:?}"))),
+        },
+        Type::Option(opt_handle) => match value {
+            Value::Null => Ok(Val::Option(None)),
+            v => Ok(Val::Option(Some(Box::new(json_to_val_with_type(
+                v,
+                &opt_handle.ty(),
+            )?)))),
+        },
+        Type::Result(res_handle) => match value {
+            Value::Object(obj) => {
+                if let Some(ok_val) = obj.get("ok") {
+                    let ok_ty = res_handle.ok().unwrap_or_else(|| Type::Bool);
+                    Ok(Val::Result(Ok(Some(Box::new(json_to_val_with_type(
+                        ok_val, &ok_ty,
+                    )?)))))
+                } else if let Some(err_val) = obj.get("err") {
+                    let err_ty = res_handle.err().unwrap_or_else(|| Type::Bool);
+                    Ok(Val::Result(Err(Some(Box::new(json_to_val_with_type(
+                        err_val, &err_ty,
+                    )?)))))
+                } else {
+                    Err(ValError::ShapeError("result", format!("{value:?}")))
+                }
+            }
+            _ => Err(ValError::ShapeError("result", format!("{value:?}"))),
+        },
+        Type::Flags(flags_handle) => match value {
+            Value::Array(arr) => {
+                let mut flags = Vec::new();
+                for name in flags_handle.names() {
+                    if arr.iter().any(|v| v.as_str() == Some(name)) {
+                        flags.push(name.to_string());
+                    }
+                }
+                Ok(Val::Flags(flags))
+            }
+            _ => Err(ValError::ShapeError("flags", format!("{value:?}"))),
+        },
+        Type::Own(_) | Type::Borrow(_) => Err(ValError::ResourceError),
+    }
+}
+
+pub fn json_to_vals_with_types(
+    value: &Value,
+    types: &[(String, Type)],
+) -> Result<Vec<Val>, ValError> {
+    match value {
+        Value::Object(obj) => {
+            let mut results = Vec::new();
+            for (name, ty) in types {
+                let value = obj.get(name).ok_or_else(|| {
+                    ValError::ShapeError("object", format!("missing field {}", name))
+                })?;
+                results.push(json_to_val_with_type(value, ty)?);
+            }
+            Ok(results)
+        }
+        _ => Err(ValError::ShapeError(
+            "object",
+            format!("expected object, got {:?}", value),
+        )),
+    }
+}
+
+pub fn json_to_val_with_return_types(value: &Value, types: &[Type]) -> Result<Vec<Val>, ValError> {
+    if types.len() == 1 {
+        return Ok(vec![json_to_val_with_type(value, &types[0])?]);
+    }
+
+    match value {
+        Value::Array(arr) => {
+            if arr.len() != types.len() {
+                return Err(ValError::ShapeError(
+                    "array",
+                    format!("expected {} items, got {}", types.len(), arr.len()),
+                ));
+            }
+            let mut results = Vec::new();
+            for (value, ty) in arr.iter().zip(types) {
+                results.push(json_to_val_with_type(value, ty)?);
+            }
+            Ok(results)
+        }
+        _ => Err(ValError::ShapeError(
+            "array",
+            format!("expected array, got {:?}", value),
+        )),
+    }
+}
+
+fn default_val_for_type(ty: &Type) -> Val {
+    match ty {
+        Type::Bool => Val::Bool(false),
+        Type::S8 => Val::S8(0),
+        Type::U8 => Val::U8(0),
+        Type::S16 => Val::S16(0),
+        Type::U16 => Val::U16(0),
+        Type::S32 => Val::S32(0),
+        Type::U32 => Val::U32(0),
+        Type::S64 => Val::S64(0),
+        Type::U64 => Val::U64(0),
+        Type::Float32 => Val::Float32(0.0),
+        Type::Float64 => Val::Float64(0.0),
+        Type::Char => Val::Char('\0'),
+        Type::String => Val::String("".to_string()),
+        Type::List(_) => Val::List(Vec::new()),
+
+        Type::Record(r) => {
+            let fields = r
+                .fields()
+                .map(|field| (field.name.to_string(), default_val_for_type(&field.ty)))
+                .collect();
+            Val::Record(fields)
+        }
+        Type::Tuple(t) => {
+            let vals = t.types().map(|ty| default_val_for_type(&ty)).collect();
+            Val::Tuple(vals)
+        }
+        Type::Variant(v) => {
+            // pick the first case as the default
+            if let Some(first_case) = v.cases().next() {
+                let payload = match first_case.ty {
+                    Some(payload_ty) => Some(Box::new(default_val_for_type(&payload_ty))),
+                    None => None,
+                };
+                Val::Variant(first_case.name.to_string(), payload)
+            } else {
+                panic!("Cannot create a default for a variant with no cases.");
+            }
+        }
+        Type::Enum(e) => Val::Enum(e.names().next().unwrap_or("").to_string()),
+        Type::Option(_) => Val::Option(None),
+        Type::Result(_) => Val::Result(Ok(None)),
+        Type::Flags(_) => Val::Flags(Vec::new()),
+
+        // Resources cannot be created from scratch. This indicates a problem.
+        Type::Own(_) | Type::Borrow(_) => {
+            panic!("Cannot create a placeholder for a resource type.")
+        }
+    }
+}
+
+/// Prepares a placeholder `Vec<Val>` to receive the results of a component function call.
+/// The vector will have the correct length and correctly-typed (but empty/zeroed) values.
+pub fn create_placeholder_results(results: &[Type]) -> Vec<Val> {
+    results.iter().map(|ty| default_val_for_type(ty)).collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use serde_json::json;
-    use wasmtime::component::Val;
+    use wasmtime::component::{Type, Val};
 
     use super::*;
-
-    #[test]
-    fn test_json_to_val_null() {
-        let json_val = Value::Null;
-        let val = json_to_val(&json_val).unwrap();
-        if let Val::Option(None) = val {
-        } else {
-            panic!("Expected Option(None) for null");
-        }
-        assert_eq!(val_to_json(&val), json!(null));
-    }
-
-    #[test]
-    fn test_json_to_val_bool() {
-        let json_val = json!(true);
-        let val = json_to_val(&json_val).unwrap();
-        assert!(matches!(val, Val::Bool(true)));
-        assert_eq!(val_to_json(&val), json!(true));
-    }
-
-    #[test]
-    fn test_json_to_val_integer() {
-        let json_val = json!(123);
-        let val = json_to_val(&json_val).unwrap();
-        assert!(matches!(val, Val::S64(123)));
-        assert_eq!(val_to_json(&val), json!(123));
-    }
-
-    #[test]
-    fn test_json_to_val_float() {
-        let json_val = json!(123.45);
-        let val = json_to_val(&json_val).unwrap();
-        if let Val::Float64(f) = val {
-            assert!((f - 123.45).abs() < 1e-6);
-        } else {
-            panic!("Expected Float64 variant");
-        }
-        if let Value::Number(n) = val_to_json(&val) {
-            let f_value = n.as_f64().unwrap();
-            assert!((f_value - 123.45).abs() < 1e-6);
-        } else {
-            panic!("Expected JSON number");
-        }
-    }
-
-    #[test]
-    fn test_json_to_val_string() {
-        let json_val = json!("test");
-        let val = json_to_val(&json_val).unwrap();
-        assert!(matches!(val, Val::String(ref s) if s == "test"));
-        assert_eq!(val_to_json(&val), json!("test"));
-    }
-
-    #[test]
-    fn test_json_to_val_array() {
-        let json_val = json!([1, 2, 3]);
-        let val = json_to_val(&json_val).unwrap();
-        if let Val::List(list) = val.clone() {
-            assert_eq!(list.len(), 3);
-            for (i, item) in list.iter().enumerate() {
-                assert!(matches!(item, Val::S64(n) if *n == i as i64 + 1));
-            }
-        } else {
-            panic!("Expected List variant");
-        }
-        let json_val = val_to_json(&val);
-        assert_eq!(json_val, json!([1, 2, 3]));
-    }
-
-    #[test]
-    fn test_json_to_val_object() {
-        let json_val = json!({"a": 10, "b": false});
-        let val = json_to_val(&json_val).unwrap();
-        if let Val::Record(fields) = val.clone() {
-            let mut field_map: HashMap<&str, &Val> = HashMap::new();
-            for (k, v) in fields.iter() {
-                field_map.insert(k, v);
-            }
-            match field_map.get("a") {
-                Some(Val::S64(n)) => assert_eq!(*n, 10),
-                _ => panic!("Expected field 'a' to be S64(10)"),
-            }
-            match field_map.get("b") {
-                Some(Val::Bool(b)) => assert!(!(*b)),
-                _ => panic!("Expected field 'b' to be Bool(false)"),
-            }
-        } else {
-            panic!("Expected Record variant");
-        }
-        assert_eq!(val_to_json(&val), json_val);
-    }
-
-    #[test]
-    fn test_json_to_vals_with_object() {
-        let json_val = json!({"x": 5, "y": 6});
-        let vals = json_to_vals(&json_val).unwrap();
-        assert_eq!(vals.len(), 2);
-        let mut found_x = false;
-        let mut found_y = false;
-        for v in vals {
-            match v {
-                Val::S64(5) => found_x = true,
-                Val::S64(6) => found_y = true,
-                _ => {}
-            }
-        }
-        assert!(found_x && found_y);
-    }
-
-    #[test]
-    fn test_json_to_vals_with_non_object() {
-        let json_val = json!("single");
-        let vals = json_to_vals(&json_val).unwrap();
-        assert_eq!(vals.len(), 1);
-        assert!(matches!(vals[0], Val::String(ref s) if s == "single"));
-    }
 
     #[test]
     fn test_vals_to_json_empty() {
@@ -723,14 +878,6 @@ mod tests {
     fn test_val_to_json_flags() {
         let val = Val::Flags(vec!["f1".to_string(), "f2".to_string()]);
         assert_eq!(val_to_json(&val), json!(["f1", "f2"]));
-    }
-
-    #[test]
-    fn test_string_val_conversion() {
-        let json_val = json!("hello");
-        let val = json_to_val(&json_val).unwrap();
-        assert!(matches!(val, Val::String(ref s) if s == "hello"));
-        assert_eq!(val_to_json(&val), json_val);
     }
 
     #[test]
@@ -1135,43 +1282,6 @@ mod tests {
     }
 
     #[test]
-    fn test_json_to_wit_conversions() {
-        let json_null = json!(null);
-        assert!(matches!(
-            json_to_val(&json_null).unwrap(),
-            Val::Option(None)
-        ));
-
-        let json_bool = json!(true);
-        assert!(matches!(json_to_val(&json_bool).unwrap(), Val::Bool(true)));
-
-        let json_number = json!(42);
-        assert!(matches!(json_to_val(&json_number).unwrap(), Val::S64(42)));
-
-        let json_string = json!("hello");
-        assert!(matches!(json_to_val(&json_string).unwrap(), Val::String(s) if s == "hello"));
-
-        let json_array = json!([1, 2, 3]);
-        if let Val::List(list) = json_to_val(&json_array).unwrap() {
-            assert_eq!(list.len(), 3);
-            assert!(matches!(&list[0], Val::S64(1)));
-            assert!(matches!(&list[1], Val::S64(2)));
-            assert!(matches!(&list[2], Val::S64(3)));
-        } else {
-            panic!("Expected List variant");
-        }
-
-        let json_object = json!({"key": "value"});
-        if let Val::Record(fields) = json_to_val(&json_object).unwrap() {
-            assert_eq!(fields.len(), 1);
-            assert_eq!(fields[0].0, "key");
-            assert!(matches!(&fields[0].1, Val::String(s) if s == "value"));
-        } else {
-            panic!("Expected Record variant");
-        }
-    }
-
-    #[test]
     fn test_wit_to_json_conversions() {
         let wit_bool = Val::Bool(false);
         assert_eq!(val_to_json(&wit_bool), json!(false));
@@ -1206,27 +1316,6 @@ mod tests {
     }
 
     #[test]
-    fn test_json_to_vals_multiple() {
-        let json_args = json!({
-            "name": "example",
-            "value": 42
-        });
-        let wit_vals = json_to_vals(&json_args).unwrap();
-        assert_eq!(wit_vals.len(), 2);
-
-        let mut found_name = false;
-        let mut found_value = false;
-        for val in wit_vals {
-            match val {
-                Val::String(s) if s == "example" => found_name = true,
-                Val::S64(42) => found_value = true,
-                _ => {}
-            }
-        }
-        assert!(found_name && found_value);
-    }
-
-    #[test]
     fn test_vals_to_json_multiple() {
         let wit_vals = vec![Val::String("example".to_string()), Val::S64(42)];
         let json_result = vals_to_json(&wit_vals);
@@ -1234,5 +1323,268 @@ mod tests {
         let obj = json_result.as_object().unwrap();
         assert_eq!(obj.get("val0").unwrap(), &json!("example"));
         assert_eq!(obj.get("val1").unwrap(), &json!(42));
+    }
+
+    #[test]
+    fn test_json_to_val_with_type() {
+        let bool_ty = Type::Bool;
+        let bool_val = json!(true);
+        assert!(matches!(
+            json_to_val_with_type(&bool_val, &bool_ty).unwrap(),
+            Val::Bool(true)
+        ));
+
+        let s8_ty = Type::S8;
+        let s8_val = json!(42);
+        assert!(matches!(
+            json_to_val_with_type(&s8_val, &s8_ty).unwrap(),
+            Val::S8(42)
+        ));
+
+        let string_ty = Type::String;
+        let string_val = json!("hello");
+        assert!(matches!(
+            json_to_val_with_type(&string_val, &string_ty).unwrap(),
+            Val::String(s) if s == "hello"
+        ));
+    }
+
+    #[test]
+    fn test_json_to_vals_with_types() {
+        let types = vec![
+            ("name".to_string(), Type::String),
+            ("age".to_string(), Type::S32),
+        ];
+        let value = json!({
+            "name": "John",
+            "age": 30
+        });
+        let vals = json_to_vals_with_types(&value, &types).unwrap();
+        assert_eq!(vals.len(), 2);
+        assert!(matches!(&vals[0], Val::String(s) if s == "John"));
+        assert!(matches!(&vals[1], Val::S32(30)));
+    }
+
+    #[test]
+    fn test_json_to_val_with_return_types() {
+        let types = vec![Type::String, Type::S32];
+        let value = json!(["John", 30]);
+        let vals = json_to_val_with_return_types(&value, &types).unwrap();
+        assert_eq!(vals.len(), 2);
+        assert!(matches!(&vals[0], Val::String(s) if s == "John"));
+        assert!(matches!(&vals[1], Val::S32(30)));
+    }
+
+    #[test]
+    fn test_json_to_val_with_type_errors() {
+        let bool_ty = Type::Bool;
+        let string_val = json!("true");
+        assert!(json_to_val_with_type(&string_val, &bool_ty).is_err());
+
+        let s8_ty = Type::S8;
+        let overflow_val = json!(1000);
+        assert!(json_to_val_with_type(&overflow_val, &s8_ty).is_err());
+    }
+
+    #[test]
+    fn test_json_to_vals_with_types_errors() {
+        let types = vec![
+            ("name".to_string(), Type::String),
+            ("age".to_string(), Type::S32),
+        ];
+        let missing_field = json!({"name": "John"});
+        assert!(json_to_vals_with_types(&missing_field, &types).is_err());
+
+        let invalid_type = json!({
+            "name": "John",
+            "age": "30"
+        });
+        assert!(json_to_vals_with_types(&invalid_type, &types).is_err());
+    }
+
+    #[test]
+    fn test_json_to_val_with_return_types_errors() {
+        let types = vec![Type::String, Type::S32];
+        let wrong_length = json!(["John"]);
+        assert!(json_to_val_with_return_types(&wrong_length, &types).is_err());
+
+        let invalid_type = json!(["John", "30"]);
+        assert!(json_to_val_with_return_types(&invalid_type, &types).is_err());
+    }
+
+    #[test]
+    fn test_roundtrip() {
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        let engine = Engine::new(&config).unwrap();
+
+        // A component that directly exports the types we want to test.
+        // This is simpler and more direct than defining/importing a function.
+        let wat = r#"
+        (component
+  (type (;0;)
+    (component
+      (type (;0;)
+        (instance
+          (type (;0;) (record (field "name" string) (field "value" u32)))
+          (export (;1;) "r" (type (eq 0)))
+          (type (;2;) (variant (case "u" u64) (case "s" string)))
+          (export (;3;) "v" (type (eq 2)))
+          (type (;4;) (tuple s32 bool))
+          (export (;5;) "t" (type (eq 4)))
+          (type (;6;) (enum "cat" "dog"))
+          (export (;7;) "e" (type (eq 6)))
+          (type (;8;) (option 1))
+          (export (;9;) "o" (type (eq 8)))
+          (type (;10;) (result 3 (error string)))
+          (export (;11;) "res" (type (eq 10)))
+          (type (;12;) (flags "read" "write"))
+          (export (;13;) "f" (type (eq 12)))
+          (type (;14;) (list 5))
+          (export (;15;) "l" (type (eq 14)))
+        )
+      )
+      (export (;0;) "weld-mcp-server:test/types@0.1.0" (instance (type 0)))
+    )
+  )
+  (export (;1;) "types" (type 0))
+  (type (;2;)
+    (component
+      (type (;0;)
+        (component
+          (type (;0;)
+            (instance
+              (type (;0;) (record (field "name" string) (field "value" u32)))
+              (export (;1;) "r" (type (eq 0)))
+              (type (;2;) (variant (case "u" u64) (case "s" string)))
+              (export (;3;) "v" (type (eq 2)))
+              (type (;4;) (tuple s32 bool))
+              (export (;5;) "t" (type (eq 4)))
+              (type (;6;) (enum "cat" "dog"))
+              (export (;7;) "e" (type (eq 6)))
+              (type (;8;) (option 1))
+              (export (;9;) "o" (type (eq 8)))
+              (type (;10;) (result 3 (error string)))
+              (export (;11;) "res" (type (eq 10)))
+              (type (;12;) (flags "read" "write"))
+              (export (;13;) "f" (type (eq 12)))
+              (type (;14;) (list 5))
+              (export (;15;) "l" (type (eq 14)))
+            )
+          )
+          (import "weld-mcp-server:test/types@0.1.0" (instance (;0;) (type 0)))
+          (type (;1;)
+            (instance
+              (type (;0;) (record (field "name" string) (field "value" u32)))
+              (export (;1;) "r" (type (eq 0)))
+              (type (;2;) (variant (case "u" u64) (case "s" string)))
+              (export (;3;) "v" (type (eq 2)))
+              (type (;4;) (tuple s32 bool))
+              (export (;5;) "t" (type (eq 4)))
+              (type (;6;) (enum "cat" "dog"))
+              (export (;7;) "e" (type (eq 6)))
+              (type (;8;) (option 1))
+              (export (;9;) "o" (type (eq 8)))
+              (type (;10;) (result 3 (error string)))
+              (export (;11;) "res" (type (eq 10)))
+              (type (;12;) (flags "read" "write"))
+              (export (;13;) "f" (type (eq 12)))
+              (type (;14;) (list 5))
+              (export (;15;) "l" (type (eq 14)))
+            )
+          )
+          (export (;1;) "weld-mcp-server:test/types@0.1.0" (instance (type 1)))
+        )
+      )
+      (export (;0;) "weld-mcp-server:test/tests@0.1.0" (component (type 0)))
+    )
+  )
+  (export (;3;) "tests" (type 2))
+)
+        "#;
+        let component = Component::new(&engine, wat).unwrap();
+        let component_type = component.component_type();
+
+        let types_component_export = component_type.get_export(&engine, "types").unwrap();
+        let types_component = match types_component_export {
+            wasmtime::component::types::ComponentItem::Component(c) => c,
+            _ => panic!("Expected 'types' to be a component export"),
+        };
+
+        let types_instance_export = types_component
+            .get_export(&engine, "weld-mcp-server:test/types@0.1.0")
+            .unwrap();
+        let types_instance = match types_instance_export {
+            wasmtime::component::types::ComponentItem::ComponentInstance(i) => i,
+            _ => panic!("Expected an instance export"),
+        };
+
+        let get_exported_type = |name: &str| match types_instance.get_export(&engine, name).unwrap()
+        {
+            wasmtime::component::types::ComponentItem::Type(ty) => ty,
+            _ => panic!("Expected a type export for '{}'", name),
+        };
+
+        let record_type = get_exported_type("r");
+        let original_record = Val::Record(vec![
+            ("name".to_string(), Val::String("alpha".to_string())),
+            ("value".to_string(), Val::U32(101)),
+        ]);
+        let json_record = val_to_json(&original_record);
+        let roundtrip_record = json_to_val_with_type(&json_record, &record_type).unwrap();
+        assert_eq!(original_record, roundtrip_record);
+
+        let variant_type = get_exported_type("v");
+        let original_variant = Val::Variant(
+            "s".to_string(),
+            Some(Box::new(Val::String("beta".to_string()))),
+        );
+        let json_variant = val_to_json(&original_variant);
+        let roundtrip_variant = json_to_val_with_type(&json_variant, &variant_type).unwrap();
+        assert_eq!(original_variant, roundtrip_variant);
+
+        let tuple_type = get_exported_type("t");
+        let original_tuple = Val::Tuple(vec![Val::S32(-42), Val::Bool(true)]);
+        let json_tuple = val_to_json(&original_tuple);
+        let roundtrip_tuple = json_to_val_with_type(&json_tuple, &tuple_type).unwrap();
+        assert_eq!(original_tuple, roundtrip_tuple);
+
+        let enum_type = get_exported_type("e");
+        let original_enum = Val::Enum("dog".to_string());
+        let json_enum = val_to_json(&original_enum);
+        let roundtrip_enum = json_to_val_with_type(&json_enum, &enum_type).unwrap();
+        assert_eq!(original_enum, roundtrip_enum);
+
+        let option_type = get_exported_type("o");
+        let inner_val = Val::Record(vec![
+            ("name".to_string(), Val::String("gamma".to_string())),
+            ("value".to_string(), Val::U32(202)),
+        ]);
+        let original_some = Val::Option(Some(Box::new(inner_val.clone())));
+        let json_inner = val_to_json(&inner_val);
+        let roundtrip_some = json_to_val_with_type(&json_inner, &option_type).unwrap();
+        assert_eq!(original_some, roundtrip_some);
+
+        let result_type = get_exported_type("res");
+        let ok_inner = Val::Variant("u".to_string(), Some(Box::new(Val::U64(303))));
+        let original_ok = Val::Result(Ok(Some(Box::new(ok_inner))));
+        let json_ok = val_to_json(&original_ok);
+        let roundtrip_ok = json_to_val_with_type(&json_ok, &result_type).unwrap();
+        assert_eq!(original_ok, roundtrip_ok);
+
+        let flags_type = get_exported_type("f");
+        let original_flags = Val::Flags(vec!["read".to_string(), "write".to_string()]);
+        let json_flags = val_to_json(&original_flags);
+        let roundtrip_flags = json_to_val_with_type(&json_flags, &flags_type).unwrap();
+        assert_eq!(original_flags, roundtrip_flags);
+
+        let list_type = get_exported_type("l");
+        let original_list = Val::List(vec![
+            Val::Tuple(vec![Val::S32(1), Val::Bool(true)]),
+            Val::Tuple(vec![Val::S32(2), Val::Bool(false)]),
+        ]);
+        let json_list = val_to_json(&original_list);
+        let roundtrip_list = json_to_val_with_type(&json_list, &list_type).unwrap();
+        assert_eq!(original_list, roundtrip_list);
     }
 }

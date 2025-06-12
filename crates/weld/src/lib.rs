@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Ok, Result};
-use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
+use component2json::{
+    component_exports_to_json_schema, create_placeholder_results, json_to_vals_with_types,
+    vals_to_json,
+};
 use futures::TryStreamExt;
 use policy_mcp::PolicyParser;
 use serde_json::Value;
@@ -558,9 +561,6 @@ impl LifecycleManager {
 
         let instance = linker.instantiate_async(&mut store, component).await?;
 
-        let params: serde_json::Value = serde_json::from_str(parameters)?;
-        let argument_vals = json_to_vals(&params)?;
-
         let export = instance
             .get_export(&mut store, None, function_name)
             .ok_or_else(|| anyhow::anyhow!("Function not found: {}", function_name))?;
@@ -569,19 +569,10 @@ impl LifecycleManager {
             .get_func(&mut store, export)
             .ok_or_else(|| anyhow::anyhow!("Export is not a function: {}", function_name))?;
 
-        let schema = component_exports_to_json_schema(component, self.engine.as_ref(), true);
-        let tools = schema
-            .get("tools")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow::anyhow!("No tools found in component"))?;
+        let params: serde_json::Value = serde_json::from_str(parameters)?;
+        let argument_vals = json_to_vals_with_types(&params, &func.params(&store))?;
 
-        let tool = tools
-            .iter()
-            .find(|t| t.get("name").and_then(|n| n.as_str()) == Some(function_name))
-            .ok_or_else(|| anyhow::anyhow!("Tool not found"))?;
-
-        let output_schema = tool["outputSchema"].clone();
-        let mut results = json_to_vals(&output_schema)?;
+        let mut results = create_placeholder_results(&func.results(&store));
 
         func.call_async(&mut store, &argument_vals, &mut results)
             .await?;
