@@ -1,5 +1,5 @@
 [package]
-name = "mcp-wasmtime"
+name = "weld-mcp-server"
 version = "0.1.0"
 edition = "2021"
 
@@ -68,7 +68,7 @@ wasmtime-wasi-http = { workspace = true }
 wasmtime-wasi-config = { workspace = true }
 
 [[bin]]
-name = "mcp-wasmtime"
+name = "weld-mcp-server"
 path = "src/main.rs"
 
 [[bin]]

@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
 
     let component = Component::from_file(
         &engine,
-        "/Users/mossaka/Developer/mossaka/mcp-wasmtime/examples/fetch-rs/fetch_rs.wasm",
+        "examples/fetch-rs/target/wasm32-wasip2/release/fetch_rs.wasm",
     )?;
 
     let mut linker = Linker::new(&engine);

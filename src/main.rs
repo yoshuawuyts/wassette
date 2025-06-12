@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 
-mod wasmtimed;
+mod weld;
 
 const BIND_ADDRESS: &str = "127.0.0.1:9001";
 
@@ -49,14 +49,14 @@ fn get_component_dir() -> PathBuf {
         let local_app_data = env::var("LOCALAPPDATA")
             .unwrap_or_else(|_| env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string()));
         PathBuf::from(local_app_data)
-            .join("mcp-wasmtime")
+            .join("weld-mcp-server")
             .join("components")
     } else if cfg!(target_os = "macos") {
         let home = env::var("HOME").unwrap_or_else(|_| "/".to_string());
         PathBuf::from(home)
             .join("Library")
             .join("Application Support")
-            .join("mcp-wasmtime")
+            .join("weld-mcp-server")
             .join("components")
     } else {
         let xdg_data_home = env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
@@ -64,7 +64,7 @@ fn get_component_dir() -> PathBuf {
             format!("{}/.local/share", home)
         });
         PathBuf::from(xdg_data_home)
-            .join("mcp-wasmtime")
+            .join("weld-mcp-server")
             .join("components")
     }
 }
@@ -203,7 +203,7 @@ async fn main() -> Result<()> {
             }
 
             let grpc_addr = "[::1]:50051";
-            let daemon = wasmtimed::WasmtimeD::new(
+            let daemon = weld::Weld::new(
                 grpc_addr.to_string(),
                 &components_dir,
                 policy_file.as_deref(),

@@ -1,1 +1,1 @@
-pub mod wasmtimed;
+pub mod weld;
