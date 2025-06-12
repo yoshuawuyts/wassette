@@ -19,6 +19,9 @@ clean:
     cargo clean
     rm -rf bin
 
+component2json path="examples/fetch-rs/target/wasm32-wasip2/release/fetch_rs.wasm":
+    cargo run --bin component2json -p component2json -- {{ path }}
+
 run RUST_LOG='info':
     RUST_LOG={{RUST_LOG}} cargo run --bin weld-mcp-server serve --policy-file policy.yaml
 

@@ -10,11 +10,6 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use lifecycle_proto::lifecycle::lifecycle_manager_service_client::LifecycleManagerServiceClient;
-use lifecycle_proto::lifecycle::{
-    CallComponentRequest, GetComponentRequest, ListComponentsRequest, LoadComponentRequest,
-    UnloadComponentRequest,
-};
 use oci_wasm::WasmClient;
 use tempfile::TempDir;
 use test_log::test;
@@ -23,8 +18,7 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, Image};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
-use tonic::transport::Channel;
-use weld_mcp_server::weld;
+use weld::LifecycleManager;
 
 const DOCKER_REGISTRY_PORT: u16 = 5000;
 
@@ -63,30 +57,10 @@ async fn setup_registry() -> anyhow::Result<ContainerAsync<DockerRegistry>> {
         .context("Failed to start docker registry")
 }
 
-async fn wait_for_client(port: u16) -> Result<LifecycleManagerServiceClient<Channel>> {
-    let mut retries = 5;
-    let mut last_error = None;
-
-    while retries > 0 {
-        let addr = format!("https://127.0.0.1:{}", port);
-        match Channel::from_shared(addr.clone())?.connect().await {
-            Ok(channel) => return Ok(LifecycleManagerServiceClient::new(channel)),
-            Err(e) => {
-                last_error = Some(e);
-                retries -= 1;
-                if retries > 0 {
-                    sleep(Duration::from_millis(200)).await;
-                }
-            }
-        }
-    }
-
-    Err(last_error.unwrap().into())
-}
-
 async fn build_example_component() -> Result<PathBuf> {
     let top_level =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").context("CARGO_MANIFEST_DIR not set")?);
+
     // NOTE: This assumes we are using linux path separators and hasn't been tested on windows.
     let component_path =
         top_level.join("examples/fetch-rs/target/wasm32-wasip2/release/fetch_rs.wasm");
@@ -112,72 +86,48 @@ async fn build_example_component() -> Result<PathBuf> {
     Ok(component_path)
 }
 
-async fn cleanup_components(client: &mut LifecycleManagerServiceClient<Channel>) -> Result<()> {
-    let list_response = client.list_components(ListComponentsRequest {}).await?;
-    for id in list_response.into_inner().ids {
-        client
-            .unload_component(UnloadComponentRequest { id: id.clone() })
-            .await
-            .with_context(|| format!("Failed to unload component {}", id))?;
+async fn cleanup_components(manager: &LifecycleManager) -> Result<()> {
+    let component_ids = manager.list_components().await;
+    for id in component_ids {
+        manager.unload_component(&id).await;
     }
     Ok(())
 }
 
-async fn setup_daemon() -> Result<(LifecycleManagerServiceClient<Channel>, TempDir, u16)> {
-    setup_daemon_with_client(reqwest::Client::default()).await
+async fn setup_lifecycle_manager() -> Result<(Arc<LifecycleManager>, TempDir)> {
+    setup_lifecycle_manager_with_client(reqwest::Client::default()).await
 }
 
-async fn setup_daemon_with_client(
+async fn setup_lifecycle_manager_with_client(
     http_client: reqwest::Client,
-) -> Result<(LifecycleManagerServiceClient<Channel>, TempDir, u16)> {
-    let port = find_open_port().await?;
-    let addr = format!("127.0.0.1:{}", port);
+) -> Result<(Arc<LifecycleManager>, TempDir)> {
     let tempdir = tempfile::tempdir()?;
-    let daemon = weld::Weld::new_with_clients(
-        addr.clone(),
-        &tempdir,
-        None,
-        oci_client::Client::new(oci_client::client::ClientConfig {
-            protocol: oci_client::client::ClientProtocol::Http,
-            ..Default::default()
-        }),
-        http_client,
-    )
-    .await
-    .context("Failed to create Weld")?;
 
-    tokio::spawn(async move {
-        if let Err(e) = daemon.serve().await {
-            tracing::error!("Daemon error: {}", e);
-        }
-    });
-
-    let mut client = wait_for_client(port)
+    let manager = Arc::new(
+        LifecycleManager::create_with_clients(
+            &tempdir,
+            None::<&str>,
+            oci_client::Client::new(oci_client::client::ClientConfig {
+                protocol: oci_client::client::ClientProtocol::Http,
+                ..Default::default()
+            }),
+            http_client,
+        )
         .await
-        .context("Failed to connect to daemon")?;
+        .context("Failed to create LifecycleManager")?,
+    );
 
-    let mut retries = 5;
-    while retries > 0 {
-        match cleanup_components(&mut client).await {
-            Ok(_) => return Ok((client, tempdir, port)),
-            Err(_) if retries > 1 => {
-                retries -= 1;
-                sleep(Duration::from_millis(200)).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
+    cleanup_components(&manager).await?;
 
-    Err(anyhow::anyhow!("Failed to verify daemon is working"))
+    Ok((manager, tempdir))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test(tokio::test)]
 async fn test_fetch_component_workflow() -> Result<()> {
-    let (mut client, _tempdir, _port) = setup_daemon().await?;
+    let (manager, _tempdir) = setup_lifecycle_manager().await?;
 
-    let list_request = tonic::Request::new(ListComponentsRequest {});
-    let list_response = client.list_components(list_request).await?;
-    let initial_components = list_response.into_inner().ids;
+    let initial_components = manager.list_components().await;
     assert!(
         initial_components.is_empty(),
         "Expected no components initially"
@@ -185,38 +135,33 @@ async fn test_fetch_component_workflow() -> Result<()> {
 
     let component_path = build_example_component().await?;
 
-    let load_request = tonic::Request::new(LoadComponentRequest {
-        path: format!("file://{}", component_path.to_str().unwrap()),
-    });
-    client.load_component(load_request).await?;
+    let (id, _) = manager
+        .load_component(&format!("file://{}", component_path.to_str().unwrap()))
+        .await?;
 
-    let list_request = tonic::Request::new(ListComponentsRequest {});
-    let list_response = client.list_components(list_request).await?;
-    let components_after_load = list_response.into_inner().ids;
+    let components_after_load = manager.list_components().await;
     assert_eq!(components_after_load.len(), 1);
     assert_eq!(components_after_load[0], "fetch_rs");
 
-    let get_request = tonic::Request::new(GetComponentRequest {
-        id: "fetch_rs".to_string(),
-    });
-    let get_response = client.get_component(get_request).await?;
-    let component_details = get_response.into_inner().details;
-    let schema: serde_json::Value = serde_json::from_str(&component_details)?;
+    let schema = manager
+        .get_component_schema(&id)
+        .await
+        .context("Component not found")?;
     assert!(schema["tools"]
         .as_array()
         .unwrap()
         .iter()
         .any(|t| t["name"] == "fetch"));
 
-    let call_request = tonic::Request::new(CallComponentRequest {
-        function_name: "fetch".to_string(),
-        parameters: r#"{"url": "https://example.com/"}"#.to_string(),
-    });
-    let call_response = client.call_component(call_request).await?;
-    let result = call_response.into_inner();
-    assert!(result.error.is_empty());
+    let component = manager
+        .get_component(&id)
+        .await
+        .context("Component not found")?;
+    let result = manager
+        .execute_component_call(&component, "fetch", r#"{"url": "https://example.com/"}"#)
+        .await?;
 
-    let response_body = String::from_utf8(result.result).expect("Invalid UTF-8 in response");
+    let response_body = result;
     assert!(response_body.contains("Example Domain"));
     assert!(response_body.contains("This domain is for use in illustrative examples in documents"));
 
@@ -225,24 +170,19 @@ async fn test_fetch_component_workflow() -> Result<()> {
     component_path2.set_file_name("fetch2.wasm");
     tokio::fs::copy(&component_path, &component_path2).await?;
 
-    let load_request2 = tonic::Request::new(LoadComponentRequest {
-        path: format!("file://{}", component_path2.to_str().unwrap()),
-    });
-    client.load_component(load_request2).await?;
+    manager
+        .load_component(&format!("file://{}", component_path2.to_str().unwrap()))
+        .await?;
 
-    let call_request = tonic::Request::new(CallComponentRequest {
-        function_name: "fetch".to_string(),
-        parameters: r#"{"url": "https://example.com/"}"#.to_string(),
-    });
-    let call_result = client.call_component(call_request).await;
-
-    assert!(call_result.is_err());
-    let error = call_result.unwrap_err();
+    // This should now fail because there are multiple components with the same tool
+    let component_id_result = manager.get_component_id_for_tool("fetch").await;
+    assert!(component_id_result.is_err());
+    let error = component_id_result.unwrap_err();
     assert!(error
-        .message()
+        .to_string()
         .contains("Multiple components found for tool 'fetch'"));
-    assert!(error.message().contains("fetch_rs"));
-    assert!(error.message().contains("fetch2"));
+    assert!(error.to_string().contains("fetch_rs"));
+    assert!(error.to_string().contains("fetch2"));
 
     Ok(())
 }
@@ -317,6 +257,7 @@ async fn start_https_server(
     Ok((addr, handle))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test(tokio::test)]
 async fn test_load_component_from_https() -> Result<()> {
     // Create HTTP client that ignores certificate validation for testing
@@ -324,7 +265,7 @@ async fn test_load_component_from_https() -> Result<()> {
         .danger_accept_invalid_certs(true)
         .build()?;
 
-    let (mut client, _tempdir, _port) = setup_daemon_with_client(http_client).await?;
+    let (manager, _tempdir) = setup_lifecycle_manager_with_client(http_client).await?;
 
     // Build the test component
     let component_path = build_example_component().await?;
@@ -335,32 +276,33 @@ async fn test_load_component_from_https() -> Result<()> {
     // Start HTTPS server
     let (addr, _server_handle) = start_https_server(wasm_bytes).await?;
 
-    // Load from HTTP
-    let http_url = format!("https://{}/fetch_rs.wasm", addr);
-    let load_request = tonic::Request::new(LoadComponentRequest { path: http_url });
-    client.load_component(load_request).await?;
+    // Load from HTTPS
+    let https_url = format!("https://{}/fetch_rs.wasm", addr);
+    manager.load_component(&https_url).await?;
 
     // Verify component was loaded
-    let list_request = tonic::Request::new(ListComponentsRequest {});
-    let list_response = client.list_components(list_request).await?;
-    let components = list_response.into_inner().ids;
+    let components = manager.list_components().await;
     assert!(components.contains(&"fetch_rs".to_string()));
 
     // Test calling the component
-    let call_request = tonic::Request::new(CallComponentRequest {
-        function_name: "fetch".to_string(),
-        parameters: r#"{"url": "https://example.com/"}"#.to_string(),
-    });
-    let call_response = client.call_component(call_request).await?;
-    let result = call_response.into_inner();
-    assert!(result.error.is_empty());
+    let component = manager
+        .get_component("fetch_rs")
+        .await
+        .context("Component not found")?;
+    let result = manager
+        .execute_component_call(&component, "fetch", r#"{"url": "https://example.com/"}"#)
+        .await?;
+
+    let response_body = result;
+    assert!(!response_body.is_empty());
 
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test(tokio::test)]
 async fn test_load_component_from_oci() -> Result<()> {
-    let (mut client, _tempdir, _port) = setup_daemon().await?;
+    let (manager, _tempdir) = setup_lifecycle_manager().await?;
 
     // Build the test component
     let component_path = build_example_component().await?;
@@ -399,13 +341,10 @@ async fn test_load_component_from_oci() -> Result<()> {
 
     // Load from OCI
     let oci_url = format!("oci://{}", reference);
-    let load_request = tonic::Request::new(LoadComponentRequest { path: oci_url });
-    client.load_component(load_request).await?;
+    manager.load_component(&oci_url).await?;
 
     // Verify component was loaded
-    let list_request = tonic::Request::new(ListComponentsRequest {});
-    let list_response = client.list_components(list_request).await?;
-    let components = list_response.into_inner().ids;
+    let components = manager.list_components().await;
     assert!(components.contains(&"fetch_rs".to_string()));
 
     Ok(())
@@ -413,17 +352,15 @@ async fn test_load_component_from_oci() -> Result<()> {
 
 #[test(tokio::test)]
 async fn test_load_component_invalid_scheme() -> Result<()> {
-    let (mut client, _tempdir, _port) = setup_daemon().await?;
+    let (manager, _tempdir) = setup_lifecycle_manager().await?;
 
     // Try to load with invalid scheme
-    let load_request = tonic::Request::new(LoadComponentRequest {
-        path: "ftp://example.com/component.wasm".to_string(),
-    });
-
-    let result = client.load_component(load_request).await;
+    let result = manager
+        .load_component("ftp://example.com/component.wasm")
+        .await;
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert!(error.message().contains("Unsupported component scheme"));
+    assert!(error.to_string().contains("Unsupported component scheme"));
 
     Ok(())
 }
@@ -435,24 +372,22 @@ async fn test_load_component_https_404() -> Result<()> {
         .danger_accept_invalid_certs(true)
         .build()?;
 
-    let (mut client, _tempdir, _port) = setup_daemon_with_client(http_client).await?;
+    let (manager, _tempdir) = setup_lifecycle_manager_with_client(http_client).await?;
 
     // Start HTTPS server
     let (addr, _server_handle) = start_https_server(Vec::new()).await?;
 
-    // Try to load from HTTP with 404
-    let http_url = format!("https://{}/nonexistent.wasm", addr);
-    let load_request = tonic::Request::new(LoadComponentRequest { path: http_url });
-
-    let result = client.load_component(load_request).await;
+    // Try to load from HTTPS with 404
+    let https_url = format!("https://{}/nonexistent.wasm", addr);
+    let result = manager.load_component(&https_url).await;
     assert!(result.is_err());
     let error = result.unwrap_err();
     assert!(
         error
-            .message()
+            .to_string()
             .contains("Failed to download component from URL"),
         "Wrong error message found, got: {}",
-        error.message()
+        error
     );
 
     Ok(())
@@ -460,17 +395,13 @@ async fn test_load_component_https_404() -> Result<()> {
 
 #[test(tokio::test)]
 async fn test_load_component_invalid_reference() -> Result<()> {
-    let (mut client, _tempdir, _port) = setup_daemon().await?;
+    let (manager, _tempdir) = setup_lifecycle_manager().await?;
 
     // Try to load without scheme
-    let load_request = tonic::Request::new(LoadComponentRequest {
-        path: "not_a_valid_reference".to_string(),
-    });
-
-    let result = client.load_component(load_request).await;
+    let result = manager.load_component("not_a_valid_reference").await;
     assert!(result.is_err());
     let error = result.unwrap_err();
-    assert!(error.message().contains("Invalid component reference"));
+    assert!(error.to_string().contains("Invalid component reference"));
 
     Ok(())
 }

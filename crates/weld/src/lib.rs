@@ -1,16 +1,85 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Ok, Result};
+use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json};
 use futures::TryStreamExt;
+use policy_mcp::PolicyParser;
 use serde_json::Value;
 use tokio::fs::DirEntry;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument};
-use wasmtime::component::Component;
-use wasmtime::Engine;
+use wasmtime::component::{Component, Linker};
+use wasmtime::{Engine, Store};
+use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi_config::{WasiConfig, WasiConfigVariables};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+
+mod wasistate;
+pub use wasistate::{create_wasi_state_template_from_policy, WasiStateTemplate};
+
+pub struct WasiState {
+    ctx: wasmtime_wasi::WasiCtx,
+    table: wasmtime_wasi::ResourceTable,
+    http: wasmtime_wasi_http::WasiHttpCtx,
+    wasi_config_vars: WasiConfigVariables,
+}
+
+impl wasmtime_wasi::IoView for WasiState {
+    fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
+        &mut self.table
+    }
+}
+
+impl wasmtime_wasi::WasiView for WasiState {
+    fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
+        &mut self.ctx
+    }
+}
+
+impl WasiHttpView for WasiState {
+    fn ctx(&mut self) -> &mut WasiHttpCtx {
+        &mut self.http
+    }
+}
+
+impl WasiStateTemplate {
+    pub fn build(&self) -> anyhow::Result<WasiState> {
+        let mut ctx_builder = WasiCtxBuilder::new();
+        if self.allow_stdout {
+            ctx_builder.inherit_stdout();
+        }
+        if self.allow_stderr {
+            ctx_builder.inherit_stderr();
+        }
+        ctx_builder.inherit_args();
+        if self.allow_args {
+            ctx_builder.inherit_args();
+        }
+        ctx_builder.inherit_network();
+        ctx_builder.allow_tcp(self.network_perms.allow_tcp);
+        ctx_builder.allow_udp(self.network_perms.allow_udp);
+        ctx_builder.allow_ip_name_lookup(self.network_perms.allow_ip_name_lookup);
+        for preopened_dir in &self.preopened_dirs {
+            ctx_builder.preopened_dir(
+                preopened_dir.host_path.as_path(),
+                preopened_dir.guest_path.as_str(),
+                preopened_dir.dir_perms,
+                preopened_dir.file_perms,
+            )?;
+        }
+
+        Ok(WasiState {
+            ctx: ctx_builder.build(),
+            table: wasmtime_wasi::ResourceTable::default(),
+            http: WasiHttpCtx::new(),
+            wasi_config_vars: WasiConfigVariables::from_iter(self.config_vars.clone()),
+        })
+    }
+}
 
 const DOWNLOADS_DIR: &str = "downloads";
 
@@ -97,13 +166,15 @@ impl ComponentRegistry {
 }
 
 /// A manager that handles the dynamic lifecycle of WebAssembly components.
+#[derive(Clone)]
 pub struct LifecycleManager {
     pub engine: Arc<Engine>,
     pub components: Arc<RwLock<HashMap<String, Arc<Component>>>>,
     pub registry: Arc<RwLock<ComponentRegistry>>,
-    pub oci_client: oci_wasm::WasmClient,
+    pub oci_client: Arc<oci_wasm::WasmClient>,
     pub http_client: reqwest::Client,
     pub plugin_dir: PathBuf,
+    pub wasi_state_template: WasiStateTemplate,
 }
 
 impl LifecycleManager {
@@ -122,14 +193,85 @@ impl LifecycleManager {
         .await
     }
 
-    /// Creates a lifecycle manager, loading the current components from the given plugin directory
-    /// and using the provided OCI client
+    /// Creates a lifecycle manager from configuration parameters
+    /// This is the primary way to create a LifecycleManager for most use cases
+    #[instrument(skip_all, fields(plugin_dir = %plugin_dir.as_ref().display()))]
+    pub async fn create(
+        plugin_dir: impl AsRef<Path>,
+        policy_file: Option<impl AsRef<Path>>,
+    ) -> Result<Self> {
+        Self::create_with_clients(
+            plugin_dir,
+            policy_file,
+            oci_client::Client::default(),
+            reqwest::Client::default(),
+        )
+        .await
+    }
+
+    /// Creates a lifecycle manager from configuration parameters with custom clients
+    #[instrument(skip_all, fields(plugin_dir = %plugin_dir.as_ref().display()))]
+    pub async fn create_with_clients(
+        plugin_dir: impl AsRef<Path>,
+        policy_file: Option<impl AsRef<Path>>,
+        oci_client: oci_client::Client,
+        http_client: reqwest::Client,
+    ) -> Result<Self> {
+        let components_dir = plugin_dir.as_ref();
+
+        if !components_dir.exists() {
+            fs::create_dir_all(components_dir)?;
+        }
+
+        let wasi_state_template = if let Some(policy_path) = policy_file {
+            let policy = PolicyParser::parse_file(policy_path)?;
+            create_wasi_state_template_from_policy(&policy, components_dir)?
+        } else {
+            WasiStateTemplate::default()
+        };
+
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        config.async_support(true);
+        let engine = Arc::new(wasmtime::Engine::new(&config)?);
+
+        // Create the lifecycle manager
+        Self::new_with_policy(
+            engine,
+            components_dir,
+            oci_client,
+            http_client,
+            wasi_state_template,
+        )
+        .await
+    }
+
+    /// Creates a lifecycle manager with custom clients and default WASI state template
     #[instrument(skip_all, fields(plugin_dir = %plugin_dir.as_ref().display()))]
     pub async fn new_with_clients(
         engine: Arc<Engine>,
         plugin_dir: impl AsRef<Path>,
         oci_cli: oci_client::Client,
         http_client: reqwest::Client,
+    ) -> Result<Self> {
+        Self::new_with_policy(
+            engine,
+            plugin_dir,
+            oci_cli,
+            http_client,
+            WasiStateTemplate::default(),
+        )
+        .await
+    }
+
+    /// Creates a lifecycle manager with custom clients and WASI state template
+    #[instrument(skip_all, fields(plugin_dir = %plugin_dir.as_ref().display()))]
+    pub async fn new_with_policy(
+        engine: Arc<Engine>,
+        plugin_dir: impl AsRef<Path>,
+        oci_cli: oci_client::Client,
+        http_client: reqwest::Client,
+        wasi_state_template: WasiStateTemplate,
     ) -> Result<Self> {
         info!("Creating new LifecycleManager");
 
@@ -168,9 +310,10 @@ impl LifecycleManager {
             engine,
             components: Arc::new(RwLock::new(components)),
             registry: Arc::new(RwLock::new(registry)),
-            oci_client: oci_wasm::WasmClient::new(oci_cli),
+            oci_client: Arc::new(oci_wasm::WasmClient::new(oci_cli)),
             http_client,
             plugin_dir: plugin_dir.as_ref().to_path_buf(),
+            wasi_state_template,
         })
     }
 
@@ -379,9 +522,77 @@ impl LifecycleManager {
         self.components.read().await.keys().cloned().collect()
     }
 
+    /// Gets the schema for a specific component
+    #[instrument(skip(self))]
+    pub async fn get_component_schema(&self, component_id: &str) -> Option<Value> {
+        let component = self.get_component(component_id).await?;
+        Some(component_exports_to_json_schema(
+            &component,
+            self.engine.as_ref(),
+            true,
+        ))
+    }
+
     fn component_path(&self, component_id: &str) -> PathBuf {
         self.plugin_dir
             .join(format!("{}.wasm", component_id.replace(':', "_")))
+    }
+
+    /// Executes a function call on a WebAssembly component
+    #[instrument(skip(self, component))]
+    pub async fn execute_component_call(
+        &self,
+        component: &Component,
+        function_name: &str,
+        parameters: &str,
+    ) -> Result<String> {
+        let mut linker = Linker::new(self.engine.as_ref());
+        wasmtime_wasi::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
+        wasmtime_wasi_config::add_to_linker(&mut linker, |h: &mut WasiState| {
+            WasiConfig::from(&h.wasi_config_vars)
+        })?;
+
+        let state = self.wasi_state_template.build()?;
+        let mut store = Store::new(self.engine.as_ref(), state);
+
+        let instance = linker.instantiate_async(&mut store, component).await?;
+
+        let params: serde_json::Value = serde_json::from_str(parameters)?;
+        let argument_vals = json_to_vals(&params)?;
+
+        let export = instance
+            .get_export(&mut store, None, function_name)
+            .ok_or_else(|| anyhow::anyhow!("Function not found: {}", function_name))?;
+
+        let func = instance
+            .get_func(&mut store, export)
+            .ok_or_else(|| anyhow::anyhow!("Export is not a function: {}", function_name))?;
+
+        let schema = component_exports_to_json_schema(component, self.engine.as_ref(), true);
+        let tools = schema
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("No tools found in component"))?;
+
+        let tool = tools
+            .iter()
+            .find(|t| t.get("name").and_then(|n| n.as_str()) == Some(function_name))
+            .ok_or_else(|| anyhow::anyhow!("Tool not found"))?;
+
+        let output_schema = tool["outputSchema"].clone();
+        let mut results = json_to_vals(&output_schema)?;
+
+        func.call_async(&mut store, &argument_vals, &mut results)
+            .await?;
+
+        let result_json = vals_to_json(&results);
+
+        if let Some(result_str) = result_json.as_str() {
+            Ok(result_str.to_string())
+        } else {
+            Ok(serde_json::to_string(&result_json)?)
+        }
     }
 }
 
