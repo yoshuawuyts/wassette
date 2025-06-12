@@ -60,6 +60,8 @@ async fn setup_registry() -> anyhow::Result<ContainerAsync<DockerRegistry>> {
 async fn build_example_component() -> Result<PathBuf> {
     let top_level =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").context("CARGO_MANIFEST_DIR not set")?);
+
+    // NOTE: This assumes we are using linux path separators and hasn't been tested on windows.
     let component_path =
         top_level.join("examples/fetch-rs/target/wasm32-wasip2/release/fetch_rs.wasm");
 
@@ -120,6 +122,7 @@ async fn setup_lifecycle_manager_with_client(
     Ok((manager, tempdir))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test(tokio::test)]
 async fn test_fetch_component_workflow() -> Result<()> {
     let (manager, _tempdir) = setup_lifecycle_manager().await?;
@@ -254,6 +257,7 @@ async fn start_https_server(
     Ok((addr, handle))
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test(tokio::test)]
 async fn test_load_component_from_https() -> Result<()> {
     // Create HTTP client that ignores certificate validation for testing
@@ -295,6 +299,7 @@ async fn test_load_component_from_https() -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test(tokio::test)]
 async fn test_load_component_from_oci() -> Result<()> {
     let (manager, _tempdir) = setup_lifecycle_manager().await?;

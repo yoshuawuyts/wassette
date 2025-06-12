@@ -6,19 +6,16 @@ use rmcp::model::{CallToolRequestParam, CallToolResult, Content, Tool};
 use rmcp::{Peer, RoleServer};
 use serde_json::{json, Value};
 use tracing::{debug, error, info};
+use weld::LifecycleManager;
 
 use crate::components::{
     get_component_tools, handle_component_call, handle_load_component, handle_unload_component,
 };
-use crate::LifecycleManagerRef;
 
-pub async fn handle_tools_list(
-    _req: Value,
-    lifecycle_manager: LifecycleManagerRef,
-) -> Result<Value> {
+pub async fn handle_tools_list(_req: Value, lifecycle_manager: &LifecycleManager) -> Result<Value> {
     debug!("Handling tools list request");
 
-    let mut tools = get_component_tools(&lifecycle_manager).await?;
+    let mut tools = get_component_tools(lifecycle_manager).await?;
     tools.extend(get_builtin_tools());
     info!("Retrieved {} tools", tools.len());
 
@@ -32,16 +29,16 @@ pub async fn handle_tools_list(
 
 pub async fn handle_tools_call(
     req: CallToolRequestParam,
-    lifecycle_manager: LifecycleManagerRef,
+    lifecycle_manager: &LifecycleManager,
     server_peer: Option<Peer<RoleServer>>,
 ) -> Result<Value> {
     let method_name = req.name.to_string();
     info!("Handling tool call for: {}", method_name);
 
     let result = match method_name.as_str() {
-        "load-component" => handle_load_component(&req, &lifecycle_manager, server_peer).await,
-        "unload-component" => handle_unload_component(&req, &lifecycle_manager, server_peer).await,
-        _ => handle_component_call(&req, &lifecycle_manager).await,
+        "load-component" => handle_load_component(&req, lifecycle_manager, server_peer).await,
+        "unload-component" => handle_unload_component(&req, lifecycle_manager, server_peer).await,
+        _ => handle_component_call(&req, lifecycle_manager).await,
     };
 
     if let Err(ref e) = result {

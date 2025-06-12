@@ -166,11 +166,12 @@ impl ComponentRegistry {
 }
 
 /// A manager that handles the dynamic lifecycle of WebAssembly components.
+#[derive(Clone)]
 pub struct LifecycleManager {
     pub engine: Arc<Engine>,
     pub components: Arc<RwLock<HashMap<String, Arc<Component>>>>,
     pub registry: Arc<RwLock<ComponentRegistry>>,
-    pub oci_client: oci_wasm::WasmClient,
+    pub oci_client: Arc<oci_wasm::WasmClient>,
     pub http_client: reqwest::Client,
     pub plugin_dir: PathBuf,
     pub wasi_state_template: WasiStateTemplate,
@@ -309,7 +310,7 @@ impl LifecycleManager {
             engine,
             components: Arc::new(RwLock::new(components)),
             registry: Arc::new(RwLock::new(registry)),
-            oci_client: oci_wasm::WasmClient::new(oci_cli),
+            oci_client: Arc::new(oci_wasm::WasmClient::new(oci_cli)),
             http_client,
             plugin_dir: plugin_dir.as_ref().to_path_buf(),
             wasi_state_template,

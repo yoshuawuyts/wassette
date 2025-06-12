@@ -6,11 +6,10 @@ use rmcp::model::{CallToolRequestParam, CallToolResult, Content, Tool};
 use rmcp::{Peer, RoleServer};
 use serde_json::{json, Value};
 use tracing::{debug, error, info, instrument};
-
-use crate::LifecycleManagerRef;
+use weld::LifecycleManager;
 
 #[instrument(skip(lifecycle_manager))]
-pub async fn get_component_tools(lifecycle_manager: &LifecycleManagerRef) -> Result<Vec<Tool>> {
+pub async fn get_component_tools(lifecycle_manager: &LifecycleManager) -> Result<Vec<Tool>> {
     debug!("Listing components");
     let component_ids = lifecycle_manager.list_components().await;
 
@@ -38,7 +37,7 @@ pub async fn get_component_tools(lifecycle_manager: &LifecycleManagerRef) -> Res
 #[instrument(skip(lifecycle_manager))]
 pub(crate) async fn handle_load_component(
     req: &CallToolRequestParam,
-    lifecycle_manager: &LifecycleManagerRef,
+    lifecycle_manager: &LifecycleManager,
     server_peer: Option<Peer<RoleServer>>,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
@@ -90,7 +89,7 @@ pub(crate) async fn handle_load_component(
 #[instrument(skip(lifecycle_manager))]
 pub(crate) async fn handle_unload_component(
     req: &CallToolRequestParam,
-    lifecycle_manager: &LifecycleManagerRef,
+    lifecycle_manager: &LifecycleManager,
     server_peer: Option<Peer<RoleServer>>,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
@@ -130,7 +129,7 @@ pub(crate) async fn handle_unload_component(
 #[instrument(skip(lifecycle_manager))]
 pub(crate) async fn handle_component_call(
     req: &CallToolRequestParam,
-    lifecycle_manager: &LifecycleManagerRef,
+    lifecycle_manager: &LifecycleManager,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
 

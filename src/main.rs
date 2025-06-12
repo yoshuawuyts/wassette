@@ -2,13 +2,12 @@ use std::env;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use mcp_server::{
     handle_prompts_list, handle_resources_list, handle_tools_call, handle_tools_list,
-    LifecycleManagerRef,
+    LifecycleManager,
 };
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, ErrorData, ListPromptsResult, ListResourcesResult,
@@ -19,7 +18,6 @@ use rmcp::transport::SseServer;
 use rmcp::ServerHandler;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
-use weld::LifecycleManager;
 
 const BIND_ADDRESS: &str = "127.0.0.1:9001";
 
@@ -69,12 +67,12 @@ fn get_component_dir() -> PathBuf {
 
 #[derive(Clone)]
 pub struct McpServer {
-    lifecycle_manager: LifecycleManagerRef,
+    lifecycle_manager: LifecycleManager,
     peer: Option<rmcp::service::Peer<RoleServer>>,
 }
 
 impl McpServer {
-    pub fn new(lifecycle_manager: LifecycleManagerRef) -> Self {
+    pub fn new(lifecycle_manager: LifecycleManager) -> Self {
         Self {
             lifecycle_manager,
             peer: None,
@@ -104,8 +102,7 @@ impl ServerHandler for McpServer {
         let peer_clone = self.peer.clone();
 
         Box::pin(async move {
-            let result =
-                handle_tools_call(params, self.lifecycle_manager.clone(), peer_clone).await;
+            let result = handle_tools_call(params, &self.lifecycle_manager, peer_clone).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
                     ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
@@ -121,8 +118,7 @@ impl ServerHandler for McpServer {
         _ctx: RequestContext<RoleServer>,
     ) -> Pin<Box<dyn Future<Output = Result<ListToolsResult, ErrorData>> + Send + 'a>> {
         Box::pin(async move {
-            let result =
-                handle_tools_list(serde_json::Value::Null, self.lifecycle_manager.clone()).await;
+            let result = handle_tools_list(serde_json::Value::Null, &self.lifecycle_manager).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
                     ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
@@ -198,7 +194,7 @@ async fn main() -> Result<()> {
             let components_dir = PathBuf::from(plugin_dir);
 
             let lifecycle_manager =
-                Arc::new(LifecycleManager::create(&components_dir, policy_file.as_deref()).await?);
+                LifecycleManager::create(&components_dir, policy_file.as_deref()).await?;
 
             let server = McpServer::new(lifecycle_manager);
 
