@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Ok, Result};
 use component2json::{
-    component_exports_to_json_schema, create_placeholder_results, json_to_vals_with_types,
-    vals_to_json,
+    component_exports_to_json_schema, create_placeholder_results, json_to_vals, vals_to_json,
 };
 use futures::TryStreamExt;
 use policy_mcp::PolicyParser;
@@ -570,7 +569,7 @@ impl LifecycleManager {
             .ok_or_else(|| anyhow::anyhow!("Export is not a function: {}", function_name))?;
 
         let params: serde_json::Value = serde_json::from_str(parameters)?;
-        let argument_vals = json_to_vals_with_types(&params, &func.params(&store))?;
+        let argument_vals = json_to_vals(&params, &func.params(&store))?;
 
         let mut results = create_placeholder_results(&func.results(&store));
 
