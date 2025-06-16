@@ -4,7 +4,7 @@
   "description": "A simple time server example",
   "main": "time.js",
   "scripts": {
-    "build": "jco componentize ./time.js --wit ./wit -o ./time.wasm"
+    "build": "jco componentize ./time.js --wit ./wit -d all -o ./time.wasm"
   },
   "keywords": [],
   "author": "",
