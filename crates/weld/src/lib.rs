@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi::p2::WasiCtxBuilder;
 use wasmtime_wasi_config::{WasiConfig, WasiConfigVariables};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
@@ -24,20 +24,20 @@ mod wasistate;
 pub use wasistate::{create_wasi_state_template_from_policy, WasiStateTemplate};
 
 pub struct WasiState {
-    ctx: wasmtime_wasi::WasiCtx,
+    ctx: wasmtime_wasi::p2::WasiCtx,
     table: wasmtime_wasi::ResourceTable,
     http: wasmtime_wasi_http::WasiHttpCtx,
     wasi_config_vars: WasiConfigVariables,
 }
 
-impl wasmtime_wasi::IoView for WasiState {
+impl wasmtime_wasi::p2::IoView for WasiState {
     fn table(&mut self) -> &mut wasmtime_wasi::ResourceTable {
         &mut self.table
     }
 }
 
-impl wasmtime_wasi::WasiView for WasiState {
-    fn ctx(&mut self) -> &mut wasmtime_wasi::WasiCtx {
+impl wasmtime_wasi::p2::WasiView for WasiState {
+    fn ctx(&mut self) -> &mut wasmtime_wasi::p2::WasiCtx {
         &mut self.ctx
     }
 }
@@ -549,7 +549,7 @@ impl LifecycleManager {
         parameters: &str,
     ) -> Result<String> {
         let mut linker = Linker::new(self.engine.as_ref());
-        wasmtime_wasi::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
         wasmtime_wasi_config::add_to_linker(&mut linker, |h: &mut WasiState| {
             WasiConfig::from(&h.wasi_config_vars)
@@ -560,13 +560,41 @@ impl LifecycleManager {
 
         let instance = linker.instantiate_async(&mut store, component).await?;
 
-        let export = instance
-            .get_export(&mut store, None, function_name)
-            .ok_or_else(|| anyhow::anyhow!("Function not found: {}", function_name))?;
+        // NOTE(Joe): To support functions that are exported from an interface, we need to split the
+        // function name into an interface name and a function name; e.g. "<ns>:<package>/<interface>.<function>"
+        // -> "<ns>:<package>/<interface>" and "<function>".
+        let (interface_name, func_name) =
+            function_name.split_once(".").unwrap_or(("", function_name));
 
-        let func = instance
-            .get_func(&mut store, export)
-            .ok_or_else(|| anyhow::anyhow!("Export is not a function: {}", function_name))?;
+        let func = if !interface_name.is_empty() {
+            let interface_index = instance
+                .get_export_index(&mut store, None, &interface_name)
+                .ok_or_else(|| anyhow::anyhow!("Interface not found: {}", interface_name))?;
+
+            let function_index = instance
+                .get_export_index(&mut store, Some(&interface_index), &func_name)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Function not found in interface: {}.{}",
+                        interface_name,
+                        func_name
+                    )
+                })?;
+
+            instance
+                .get_func(&mut store, &function_index)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Function not found in interface: {}.{}",
+                        interface_name,
+                        func_name
+                    )
+                })?
+        } else {
+            instance
+                .get_func(&mut store, &func_name)
+                .ok_or_else(|| anyhow::anyhow!("Function not found: {}", func_name))?
+        };
 
         let params: serde_json::Value = serde_json::from_str(parameters)?;
         let argument_vals = json_to_vals(&params, &func.params(&store))?;
