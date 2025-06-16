@@ -568,11 +568,11 @@ impl LifecycleManager {
 
         let func = if !interface_name.is_empty() {
             let interface_index = instance
-                .get_export_index(&mut store, None, &interface_name)
+                .get_export_index(&mut store, None, interface_name)
                 .ok_or_else(|| anyhow::anyhow!("Interface not found: {}", interface_name))?;
 
             let function_index = instance
-                .get_export_index(&mut store, Some(&interface_index), &func_name)
+                .get_export_index(&mut store, Some(&interface_index), func_name)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "Function not found in interface: {}.{}",
@@ -582,7 +582,7 @@ impl LifecycleManager {
                 })?;
 
             instance
-                .get_func(&mut store, &function_index)
+                .get_func(&mut store, function_index)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "Function not found in interface: {}.{}",
@@ -591,8 +591,11 @@ impl LifecycleManager {
                     )
                 })?
         } else {
+            let func_index = instance
+                .get_export_index(&mut store, None, func_name)
+                .ok_or_else(|| anyhow::anyhow!("Function not found: {}", func_name))?;
             instance
-                .get_func(&mut store, &func_name)
+                .get_func(&mut store, func_index)
                 .ok_or_else(|| anyhow::anyhow!("Function not found: {}", func_name))?
         };
 
