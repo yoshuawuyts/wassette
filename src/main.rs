@@ -37,12 +37,12 @@ enum Commands {
         #[arg(long)]
         policy_file: Option<String>,
 
-        /// Enable stdio transport (default)
-        #[arg(long, default_value_t = true)]
+        /// Enable stdio transport
+        #[arg(long)]
         stdio: bool,
 
         /// Enable HTTP transport 
-        #[arg(long, default_value_t = false)]
+        #[arg(long)]
         http: bool,
     },
 }
@@ -209,8 +209,17 @@ async fn main() -> Result<()> {
             let server = McpServer::new(lifecycle_manager);
 
             match (*stdio, *http) {
+                (false, false) => {
+                    // Default case: use stdio transport
+                    tracing::info!("Starting MCP server with stdio transport (default)");
+                    let transport = stdio_transport();
+                    let running_service = serve_server(server, transport).await?;
+                    
+                    tokio::signal::ctrl_c().await?;
+                    let _ = running_service.cancel().await;
+                }
                 (true, false) => {
-                    // Stdio transport only (default)
+                    // Stdio transport only 
                     tracing::info!("Starting MCP server with stdio transport");
                     let transport = stdio_transport();
                     let running_service = serve_server(server, transport).await?;
@@ -229,36 +238,9 @@ async fn main() -> Result<()> {
                     ct.cancel();
                 }
                 (true, true) => {
-                    // Both transports (run concurrently)
-                    tracing::info!("Starting MCP server with both stdio and HTTP transports");
-                    tracing::info!("HTTP transport listening on {}", BIND_ADDRESS);
-                    
-                    let server_clone = server.clone();
-                    let stdio_handle = tokio::spawn(async move {
-                        let transport = stdio_transport();
-                        let running_service = serve_server(server_clone, transport).await.unwrap();
-                        tokio::signal::ctrl_c().await.unwrap();
-                        let _ = running_service.cancel().await;
-                    });
-
-                    let http_handle = tokio::spawn(async move {
-                        let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
-                            .await
-                            .unwrap()
-                            .with_service(move || server.clone());
-                        tokio::signal::ctrl_c().await.unwrap();
-                        ct.cancel();
-                    });
-
-                    // Wait for Ctrl+C
-                    tokio::signal::ctrl_c().await?;
-                    
-                    // Cancel both handles
-                    stdio_handle.abort();
-                    http_handle.abort();
-                }
-                (false, false) => {
-                    return Err(anyhow::anyhow!("At least one transport (--stdio or --http) must be enabled"));
+                    return Err(anyhow::anyhow!(
+                        "Running both stdio and HTTP transports simultaneously is not supported. Please choose one."
+                    ));
                 }
             }
 
