@@ -8,5 +8,6 @@
         "build:component": "jco componentize -w ./wit weather.js -d stdio -d random -d clocks -o weather.wasm",
         "transpile": "jco transpile weather.wasm -o out-dir",
         "debug": "node use-weather.js"
-    }
+    },
+    "license": "Apache-2.0"
 }

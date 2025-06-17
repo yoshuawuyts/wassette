@@ -1,0 +1,3 @@
+version: "1.0"
+description: "Permission policy for time-server"
+permissions: {} 

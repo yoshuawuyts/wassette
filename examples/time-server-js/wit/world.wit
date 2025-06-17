@@ -1,0 +1,9 @@
+package local:time-server;
+
+interface time {
+    get-current-time: func() -> string;
+}
+
+world time-server {
+    export time;
+} 

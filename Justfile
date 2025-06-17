@@ -10,11 +10,13 @@ build-examples mode="debug":
     mkdir -p bin
     cargo build --target wasm32-wasip2 {{ if mode == "release" { "--release" } else { "" } }} --manifest-path examples/fetch-rs/Cargo.toml
     cargo build --target wasm32-wasip2 {{ if mode == "release" { "--release" } else { "" } }} --manifest-path examples/filesystem/Cargo.toml
-    cd examples/get-weather && just build
+    (cd examples/get-weather && just build)
+    (cd examples/time-server-js && just build)
     cp examples/fetch-rs/target/wasm32-wasip2/{{ mode }}/fetch_rs.wasm bin/fetch-rs.wasm
     cp examples/filesystem/target/wasm32-wasip2/{{ mode }}/filesystem.wasm bin/filesystem.wasm
     cp examples/get-weather/weather.wasm bin/get-weather.wasm
-
+    cp examples/time-server-js/time.wasm bin/time-server-js.wasm
+    
 clean:
     cargo clean
     rm -rf bin
