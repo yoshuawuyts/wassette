@@ -1,0 +1,10 @@
+install:
+    pip install componentize-py
+
+bindings:
+    componentize-py -d wit -w sandbox bindings .
+
+build:
+    componentize-py -d wit -w sandbox componentize -s main -o eval.wasm
+
+all: bindings build 
