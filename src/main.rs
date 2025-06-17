@@ -14,7 +14,7 @@ use rmcp::model::{
     ListToolsResult, PaginatedRequestParamInner, ServerCapabilities, ServerInfo, ToolsCapability,
 };
 use rmcp::service::{serve_server, RequestContext, RoleServer};
-use rmcp::transport::{SseServer, stdio as stdio_transport};
+use rmcp::transport::{stdio as stdio_transport, SseServer};
 use rmcp::ServerHandler;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
@@ -41,7 +41,7 @@ enum Commands {
         #[arg(long)]
         stdio: bool,
 
-        /// Enable HTTP transport 
+        /// Enable HTTP transport
         #[arg(long)]
         http: bool,
     },
@@ -214,22 +214,25 @@ async fn main() -> Result<()> {
                     tracing::info!("Starting MCP server with stdio transport (default)");
                     let transport = stdio_transport();
                     let running_service = serve_server(server, transport).await?;
-                    
+
                     tokio::signal::ctrl_c().await?;
                     let _ = running_service.cancel().await;
                 }
                 (true, false) => {
-                    // Stdio transport only 
+                    // Stdio transport only
                     tracing::info!("Starting MCP server with stdio transport");
                     let transport = stdio_transport();
                     let running_service = serve_server(server, transport).await?;
-                    
+
                     tokio::signal::ctrl_c().await?;
                     let _ = running_service.cancel().await;
                 }
                 (false, true) => {
                     // HTTP transport only
-                    tracing::info!("Starting MCP server on {} with HTTP transport", BIND_ADDRESS);
+                    tracing::info!(
+                        "Starting MCP server on {} with HTTP transport",
+                        BIND_ADDRESS
+                    );
                     let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
                         .await?
                         .with_service(move || server.clone());
