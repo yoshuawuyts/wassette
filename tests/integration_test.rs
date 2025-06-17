@@ -1,5 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use test_log::test;
 use testcontainers::core::WaitFor;
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, Image};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use weld::LifecycleManager;
@@ -402,6 +404,259 @@ async fn test_load_component_invalid_reference() -> Result<()> {
     assert!(result.is_err());
     let error = result.unwrap_err();
     assert!(error.to_string().contains("Invalid component reference"));
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_stdio_transport() -> Result<()> {
+    // Get the path to the built binary
+    let binary_path = std::env::current_dir()
+        .context("Failed to get current directory")?
+        .join("target/debug/weld-mcp-server");
+
+    // Start the server with stdio transport (disable logs to avoid stdout pollution)
+    let mut child = tokio::process::Command::new(&binary_path)
+        .args(["serve", "--stdio"])
+        .env("RUST_LOG", "off")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to start weld-mcp-server with stdio transport")?;
+
+    let stdin = child.stdin.take().context("Failed to get stdin handle")?;
+    let stdout = child.stdout.take().context("Failed to get stdout handle")?;
+    let stderr = child.stderr.take().context("Failed to get stderr handle")?;
+
+    let mut stdin = stdin;
+    let mut stdout = BufReader::new(stdout);
+    let mut stderr = BufReader::new(stderr);
+
+    // Give the server a moment to start
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Check if the process is still running
+    if let Ok(exit_status) = child.try_wait() {
+        if let Some(status) = exit_status {
+            // Process has exited, read stderr to see what went wrong
+            let mut stderr_output = String::new();
+            let _ = stderr.read_line(&mut stderr_output).await;
+            return Err(anyhow::anyhow!(
+                "Server process exited with status: {:?}, stderr: {}",
+                status,
+                stderr_output
+            ));
+        }
+    }
+
+    // Send MCP initialize request
+    let initialize_request = r#"{"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}, "id": 1}
+"#;
+
+    stdin.write_all(initialize_request.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Read and verify response with shorter timeout for debugging
+    let mut response_line = String::new();
+    match tokio::time::timeout(Duration::from_secs(5), stdout.read_line(&mut response_line)).await {
+        Ok(Ok(_)) => {
+            // Successfully read a line
+        }
+        Ok(Err(e)) => {
+            // Read error
+            return Err(anyhow::anyhow!("Failed to read initialize response: {}", e));
+        }
+        Err(_) => {
+            // Timeout - try to read stderr to see if there are any error messages
+            let mut stderr_output = String::new();
+            let _ =
+                tokio::time::timeout(Duration::from_secs(1), stderr.read_line(&mut stderr_output))
+                    .await;
+            return Err(anyhow::anyhow!(
+                "Timeout waiting for initialize response. Stderr: {}",
+                stderr_output
+            ));
+        }
+    }
+
+    if response_line.trim().is_empty() {
+        return Err(anyhow::anyhow!("Received empty response"));
+    }
+
+    let response: serde_json::Value =
+        serde_json::from_str(&response_line).context("Failed to parse initialize response")?;
+
+    // Verify the response structure
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 1);
+    assert!(response["result"].is_object());
+    assert_eq!(response["result"]["protocolVersion"], "2024-11-05");
+    assert!(response["result"]["capabilities"]["tools"]["listChanged"]
+        .as_bool()
+        .unwrap_or(false));
+
+    // Send initialized notification (required by MCP protocol)
+    let initialized_notification = r#"{"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+"#;
+
+    stdin.write_all(initialized_notification.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Send list_tools request
+    let list_tools_request = r#"{"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2}
+"#;
+
+    stdin.write_all(list_tools_request.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Read and verify tools list response
+    let mut tools_response_line = String::new();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        stdout.read_line(&mut tools_response_line),
+    )
+    .await
+    .context("Timeout waiting for tools/list response")?
+    .context("Failed to read tools/list response")?;
+
+    let tools_response: serde_json::Value = serde_json::from_str(&tools_response_line)
+        .context("Failed to parse tools/list response")?;
+
+    // Verify the tools response structure
+    assert_eq!(tools_response["jsonrpc"], "2.0");
+    assert_eq!(tools_response["id"], 2);
+    assert!(tools_response["result"].is_object());
+    assert!(tools_response["result"]["tools"].is_array());
+
+    // Verify we have the expected built-in tools
+    let tools = &tools_response["result"]["tools"].as_array().unwrap();
+    assert!(tools.len() >= 2); // Should have at least load-component and unload-component
+
+    let tool_names: Vec<String> = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(tool_names.contains(&"load-component".to_string()));
+    assert!(tool_names.contains(&"unload-component".to_string()));
+
+    // Clean up
+    child.kill().await.ok();
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_http_transport() -> Result<()> {
+    // Use a random available port to avoid conflicts
+    let port = find_open_port().await?;
+
+    // We need to modify the source to support configurable bind address
+    // For now, let's test with the default port but check if it's available
+    let default_port = 9001u16;
+    let test_port = if TcpListener::bind(format!("127.0.0.1:{}", default_port))
+        .await
+        .is_ok()
+    {
+        default_port
+    } else {
+        port
+    };
+
+    // If we're not using the default port, skip this test for now
+    // since the server code uses a hardcoded bind address
+    if test_port != default_port {
+        println!("Skipping HTTP transport test: default port 9001 is not available");
+        return Ok(());
+    }
+
+    // Get the path to the built binary
+    let binary_path = std::env::current_dir()
+        .context("Failed to get current directory")?
+        .join("target/debug/weld-mcp-server");
+
+    // Start the server with HTTP transport
+    let mut child = tokio::process::Command::new(&binary_path)
+        .args(["serve", "--http"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to start weld-mcp-server with HTTP transport")?;
+
+    // Give the server time to start
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+
+    // Create HTTP client
+    let client = reqwest::Client::new();
+    let base_url = format!("http://127.0.0.1:{}", test_port);
+
+    // Test that the server is responding
+    let response = tokio::time::timeout(Duration::from_secs(10), client.get(&base_url).send())
+        .await
+        .context("Timeout waiting for HTTP server response")?
+        .context("Failed to connect to HTTP server")?;
+
+    // The server should return some response (even if it's an error for GET requests)
+    // The important thing is that it's listening and responding
+    assert!(response.status().as_u16() >= 200);
+
+    // Clean up
+    child.kill().await.ok();
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_default_stdio_transport() -> Result<()> {
+    // Get the path to the built binary
+    let binary_path = std::env::current_dir()
+        .context("Failed to get current directory")?
+        .join("target/debug/weld-mcp-server");
+
+    // Start the server without any transport flags (should default to stdio)
+    let mut child = tokio::process::Command::new(&binary_path)
+        .args(["serve"])
+        .env("RUST_LOG", "off")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to start weld-mcp-server with default transport")?;
+
+    let stdin = child.stdin.take().context("Failed to get stdin handle")?;
+    let stdout = child.stdout.take().context("Failed to get stdout handle")?;
+
+    let mut stdin = stdin;
+    let mut stdout = BufReader::new(stdout);
+
+    // Give the server a moment to start
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Send MCP initialize request
+    let initialize_request = r#"{"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}, "id": 1}
+"#;
+
+    stdin.write_all(initialize_request.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Read and verify response
+    let mut response_line = String::new();
+    tokio::time::timeout(Duration::from_secs(5), stdout.read_line(&mut response_line))
+        .await
+        .context("Timeout waiting for initialize response")?
+        .context("Failed to read initialize response")?;
+
+    let response: serde_json::Value =
+        serde_json::from_str(&response_line).context("Failed to parse initialize response")?;
+
+    // Verify the response structure (this confirms stdio transport is working)
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 1);
+    assert!(response["result"].is_object());
+
+    // Clean up
+    child.kill().await.ok();
 
     Ok(())
 }
