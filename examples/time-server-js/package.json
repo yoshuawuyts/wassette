@@ -1,14 +1,11 @@
 {
   "name": "time-server",
   "version": "1.0.0",
-  "description": "A simple time server example",
   "main": "time.js",
   "scripts": {
     "build": "jco componentize ./time.js --wit ./wit -d all -o ./time.wasm"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "dependencies": {
         "@bytecodealliance/componentize-js": "0.18.1",
         "@bytecodealliance/jco": "^1.11.1"
