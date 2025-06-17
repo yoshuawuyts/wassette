@@ -13,8 +13,8 @@ use rmcp::model::{
     CallToolRequestParam, CallToolResult, ErrorData, ListPromptsResult, ListResourcesResult,
     ListToolsResult, PaginatedRequestParamInner, ServerCapabilities, ServerInfo, ToolsCapability,
 };
-use rmcp::service::{RequestContext, RoleServer};
-use rmcp::transport::SseServer;
+use rmcp::service::{serve_server, RequestContext, RoleServer};
+use rmcp::transport::{SseServer, stdio as stdio_transport};
 use rmcp::ServerHandler;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
@@ -36,6 +36,14 @@ enum Commands {
 
         #[arg(long)]
         policy_file: Option<String>,
+
+        /// Enable stdio transport (default)
+        #[arg(long, default_value_t = true)]
+        stdio: bool,
+
+        /// Enable HTTP transport 
+        #[arg(long, default_value_t = false)]
+        http: bool,
     },
 }
 
@@ -190,6 +198,8 @@ async fn main() -> Result<()> {
         Commands::Serve {
             plugin_dir,
             policy_file,
+            stdio,
+            http,
         } => {
             let components_dir = PathBuf::from(plugin_dir);
 
@@ -198,13 +208,59 @@ async fn main() -> Result<()> {
 
             let server = McpServer::new(lifecycle_manager);
 
-            tracing::info!("Starting MCP server on {}", BIND_ADDRESS);
-            let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
-                .await?
-                .with_service(move || server.clone());
+            match (*stdio, *http) {
+                (true, false) => {
+                    // Stdio transport only (default)
+                    tracing::info!("Starting MCP server with stdio transport");
+                    let transport = stdio_transport();
+                    let running_service = serve_server(server, transport).await?;
+                    
+                    tokio::signal::ctrl_c().await?;
+                    let _ = running_service.cancel().await;
+                }
+                (false, true) => {
+                    // HTTP transport only
+                    tracing::info!("Starting MCP server on {} with HTTP transport", BIND_ADDRESS);
+                    let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
+                        .await?
+                        .with_service(move || server.clone());
 
-            tokio::signal::ctrl_c().await?;
-            ct.cancel();
+                    tokio::signal::ctrl_c().await?;
+                    ct.cancel();
+                }
+                (true, true) => {
+                    // Both transports (run concurrently)
+                    tracing::info!("Starting MCP server with both stdio and HTTP transports");
+                    tracing::info!("HTTP transport listening on {}", BIND_ADDRESS);
+                    
+                    let server_clone = server.clone();
+                    let stdio_handle = tokio::spawn(async move {
+                        let transport = stdio_transport();
+                        let running_service = serve_server(server_clone, transport).await.unwrap();
+                        tokio::signal::ctrl_c().await.unwrap();
+                        let _ = running_service.cancel().await;
+                    });
+
+                    let http_handle = tokio::spawn(async move {
+                        let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
+                            .await
+                            .unwrap()
+                            .with_service(move || server.clone());
+                        tokio::signal::ctrl_c().await.unwrap();
+                        ct.cancel();
+                    });
+
+                    // Wait for Ctrl+C
+                    tokio::signal::ctrl_c().await?;
+                    
+                    // Cancel both handles
+                    stdio_handle.abort();
+                    http_handle.abort();
+                }
+                (false, false) => {
+                    return Err(anyhow::anyhow!("At least one transport (--stdio or --http) must be enabled"));
+                }
+            }
 
             tracing::info!("MCP server shutting down");
         }

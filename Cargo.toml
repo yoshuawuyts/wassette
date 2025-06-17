@@ -46,6 +46,7 @@ reqwest = { workspace = true }
 rmcp = { workspace = true, features = [
     "server",
     "transport-sse-server",
+    "transport-io",
     "macros",
 ] }
 serde_json = { workspace = true }
