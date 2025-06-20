@@ -1,10 +1,13 @@
-install:
-    pip install componentize-py
+install-uv:
+    if ! command -v uv &> /dev/null; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi
+
+install: install-uv
+    uv pip install componentize-py
 
 bindings:
-    componentize-py -d wit -w sandbox bindings .
+    uv run componentize-py -d wit -w sandbox bindings .
 
 build:
-    componentize-py -d wit -w sandbox componentize -s main -o eval.wasm
+    uv run componentize-py -d wit -w sandbox componentize -s main -o eval.wasm
 
 all: bindings build 
