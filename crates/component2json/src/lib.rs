@@ -890,7 +890,7 @@ mod tests {
         config.wasm_component_model(true);
         config.async_support(true);
         let engine = Engine::new(&config).unwrap();
-        let component = Component::from_file(&engine, "testdata/filesystem.wasm").unwrap();
+        let component = Component::from_file(&engine, "testdata/filesystem-rs.wasm").unwrap();
         let schema = component_exports_to_json_schema(&component, &engine, true);
 
         let tools = schema.get("tools").unwrap().as_array().unwrap();

@@ -1,5 +1,0 @@
-node_modules
-dist
-*.wasm
-pnpm-lock.yaml
-out-dir
