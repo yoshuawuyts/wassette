@@ -13,11 +13,13 @@ build-examples mode="debug":
     (cd examples/get-weather-js && just build)
     (cd examples/time-server-js && just build)
     (cd examples/eval-py && just build)
+    (cd examples/gomodule-go && just build)
     cp examples/fetch-rs/target/wasm32-wasip2/{{ mode }}/fetch_rs.wasm bin/fetch-rs.wasm
     cp examples/filesystem-rs/target/wasm32-wasip2/{{ mode }}/filesystem.wasm bin/filesystem.wasm
     cp examples/get-weather-js/weather.wasm bin/get-weather-js.wasm
     cp examples/time-server-js/time.wasm bin/time-server-js.wasm
     cp examples/eval-py/eval.wasm bin/eval-py.wasm
+    cp examples/gomodule-go/gomodule.wasm bin/gomodule.wasm
     
 clean:
     cargo clean

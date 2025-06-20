@@ -1,0 +1,18 @@
+package local:gomodule-server;
+
+interface gomodule {
+    /// Get the latest version of multiple Go modules
+    /// Returns JSON string with module -> version mapping
+    get-latest-versions: func(module-names: string) -> result<string, string>;
+    
+    /// Get detailed information about multiple Go modules  
+    /// Returns JSON string with module information array
+    get-module-info: func(module-names: string) -> result<string, string>;
+}
+
+world gomodule-server {
+    include wasi:cli/imports@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    
+    export gomodule;
+} 
