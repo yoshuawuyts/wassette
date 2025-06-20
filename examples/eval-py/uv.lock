@@ -1,0 +1,26 @@
+version = 1
+requires-python = ">=3.10"
+
+[[package]]
+name = "componentize-py"
+version = "0.17.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/6d/c00b2b09ff22d0cc5587f0a8d146a3682c0ee9adb8f8bbbcc7479965a571/componentize_py-0.17.1.tar.gz", hash = "sha256:a3dec642771405cbfd652a182811bfb5dbfd0b0a383d3fa03347800e25b99d22", size = 161925 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/24/07/291f03cb1185d148985213b50194160ffb0c2cae80def62bd4807557647e/componentize_py-0.17.1-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:31611ce4fff2500d30fda011fbd2919fbf9adbb8db5041ed70f7138f21cf0479", size = 19404639 },
+    { url = "https://files.pythonhosted.org/packages/56/af/fad0ef80ab3992ab733931a5b22f007a71447d031c876e0c7b3d106020c5/componentize_py-0.17.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:f70807f0b6a270d7f6489ae5f6c92ae57251aaee4046c8b07b354fbfc826e02c", size = 18947122 },
+    { url = "https://files.pythonhosted.org/packages/07/2b/612f7e57231f1269da434f222379782b9ea47de47c86ffa72021353c178f/componentize_py-0.17.1-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d453218e6931e2d7ccac4031342a8e0ec2fd49787c3be222a4d492675659a378", size = 19713907 },
+    { url = "https://files.pythonhosted.org/packages/36/2d/b6b8ce3ab84517bb9eafec7e6cd08fb167b68aec4551ece2686c9b0d559c/componentize_py-0.17.1-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c3321c21682040806274957caf992033fd33049e9c6de0ef3e4ac27b6d10d828", size = 20288778 },
+    { url = "https://files.pythonhosted.org/packages/62/d2/07e670e8a228834e0f2701a90f4e94942af2284cff84fc3b736887b3a227/componentize_py-0.17.1-cp39-abi3-win_amd64.whl", hash = "sha256:ab9ae2d8ab246604609ba031dd0f97666e1a4af932bc5e1f3349223bf8270a1a", size = 18263892 },
+]
+
+[[package]]
+name = "eval-py"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "componentize-py" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "componentize-py", specifier = ">=0.17.1" }]
