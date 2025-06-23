@@ -6,10 +6,10 @@ permissions:
   storage:
     allow:
       # Allow read access to the weld-mcp-server project directory
-      - uri: "fs:///Users/jduffney/github/weld-mcp-server"
+      - uri: "fs:///Users/USERNAME/github/weld-mcp-server"
         access: ["read"]
     # Allow read access to the user's home directory
-      - uri: "fs:///Users/jduffney"
+      - uri: "fs:///Users/USERNAME"
         access: ["read"]
       # Allow read access to the root filesystem
       - uri: "fs:///"
