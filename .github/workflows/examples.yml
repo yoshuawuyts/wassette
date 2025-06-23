@@ -1,0 +1,100 @@
+name: Publish Examples
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  REGISTRY: ghcr.io
+  TINYGO_VERSION: 0.36.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+    - uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3.0.0
+    - uses: astral-sh/setup-uv@445689ea25e0de0a23313031f5fe577c74ae45a1 # v6.3.0
+    - uses: acifani/setup-tinygo@db56321a62b9a67922bb9ac8f9d085e218807bb3 # v0.2.1
+      with:
+        tinygo-version: ${{ env.TINYGO_VERSION }}
+    - run: ./scripts/install-protobuf.sh
+      shell: bash
+    - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1.13.0
+    - run: rustup target add wasm32-wasip2
+    - name: Build
+      run: just build-examples
+    - name: Upload wasm
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: examples
+        path: bin
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    needs: build
+    strategy:
+      matrix:
+        component:
+          - name: gomodule
+            file: gomodule.wasm
+          - name: eval-py
+            file: eval-py.wasm
+          - name: time-server-js
+            file: time-server-js.wasm
+          - name: get-weather-js
+            file: get-weather-js.wasm
+          - name: filesystem
+            file: filesystem.wasm
+          - name: fetch-rs
+            file: fetch-rs.wasm
+          - name: get-weather
+            file: get-weather.wasm
+          - name: weld-mcp-server
+            file: weld-mcp-server
+          - name: memory-server-python
+            file: memory-server-python.wasm
+          - name: git-server-go
+            file: git-server-go.wasm
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: examples
+          path: bin
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Determine tag
+        id: meta
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+            echo "tag=$VERSION" >> $GITHUB_OUTPUT
+            echo "latest=true" >> $GITHUB_OUTPUT
+          else
+            echo "tag=main" >> $GITHUB_OUTPUT
+            echo "latest=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Publish ${{ matrix.component.name }}
+        uses: bytecodealliance/wkg-github-action@10b3b04b9059ba46208cd7daf7d352af14bded0f # v5
+        with:
+          file: bin/${{ matrix.component.file }}
+          oci-reference-without-tag: ghcr.io/${{ github.repository_owner }}/${{ matrix.component.name }}
+          version: ${{ steps.meta.outputs.tag }}
+      - name: Publish ${{ matrix.component.name }} latest (if latest)
+        uses: bytecodealliance/wkg-github-action@10b3b04b9059ba46208cd7daf7d352af14bded0f # v5
+        if: steps.meta.outputs.latest == 'true'
+        with:
+          file: bin/${{ matrix.component.file }}
+          oci-reference-without-tag: ghcr.io/${{ github.repository_owner }}/${{ matrix.component.name }}
+          version: latest
