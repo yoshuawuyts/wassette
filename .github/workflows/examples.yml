@@ -58,14 +58,6 @@ jobs:
             file: filesystem.wasm
           - name: fetch-rs
             file: fetch-rs.wasm
-          - name: get-weather
-            file: get-weather.wasm
-          - name: weld-mcp-server
-            file: weld-mcp-server
-          - name: memory-server-python
-            file: memory-server-python.wasm
-          - name: git-server-go
-            file: git-server-go.wasm
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
