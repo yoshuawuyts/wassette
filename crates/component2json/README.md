@@ -69,7 +69,7 @@ let placeholder_results = create_placeholder_results(&result_types);
 ```json
 {
     "type": "array",
-    "items": <schema-of-element-type>
+    "items": "SCHEMA_OF_ELEMENT_TYPE"
 }
 ```
 
@@ -79,9 +79,9 @@ let placeholder_results = create_placeholder_results(&result_types);
 {
     "type": "object",
     "properties": {
-        "<field-name>": <schema-of-field-type>
+        "FIELD_NAME": "SCHEMA_OF_FIELD_TYPE"
     },
-    "required": ["<field-names>"]
+    "required": ["FIELD_NAMES"]
 }
 ```
 
@@ -90,9 +90,9 @@ let placeholder_results = create_placeholder_results(&result_types);
 ```json
 {
     "type": "array",
-    "prefixItems": [<schema-of-each-type>],
-    "minItems": <length>,
-    "maxItems": <length>
+    "prefixItems": ["SCHEMA_OF_EACH_TYPE"],
+    "minItems": "LENGTH",
+    "maxItems": "LENGTH"
 }
 ```
 
@@ -104,15 +104,15 @@ let placeholder_results = create_placeholder_results(&result_types);
         {
             "type": "object",
             "properties": {
-                "tag": { "const": "<case-name>" },
-                "val": <schema-of-payload-type>
+                "tag": { "const": "CASE_NAME" },
+                "val": "SCHEMA_OF_PAYLOAD_TYPE"
             },
             "required": ["tag", "val"]
         },
         {
             "type": "object",
             "properties": {
-                "tag": { "const": "<case-name>" }
+                "tag": { "const": "CASE_NAME" }
             },
             "required": ["tag"]
         }
@@ -125,7 +125,7 @@ let placeholder_results = create_placeholder_results(&result_types);
 ```json
 {
     "type": "string",
-    "enum": ["<enum-values>"]
+    "enum": ["ENUM_VALUES"]
 }
 ```
 
@@ -135,7 +135,7 @@ let placeholder_results = create_placeholder_results(&result_types);
 {
     "anyOf": [
         { "type": "null" },
-        <schema-of-inner-type>
+        "SCHEMA_OF_INNER_TYPE"
     ]
 }
 ```
@@ -148,14 +148,14 @@ let placeholder_results = create_placeholder_results(&result_types);
         {
             "type": "object",
             "properties": {
-                "ok": <schema-of-ok-type>
+                "ok": "SCHEMA_OF_OK_TYPE"
             },
             "required": ["ok"]
         },
         {
             "type": "object",
             "properties": {
-                "err": <schema-of-err-type>
+                "err": "SCHEMA_OF_ERR_TYPE"
             },
             "required": ["err"]
         }
@@ -177,6 +177,6 @@ let placeholder_results = create_placeholder_results(&result_types);
 ```json
 {
     "type": "string",
-    "description": "<own'd|borrow'd> resource: <resource-name>"
+    "description": "RESOURCE_TYPE resource: RESOURCE_NAME"
 }
 ```
