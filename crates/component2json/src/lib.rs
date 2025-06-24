@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use serde_json::{json, Map, Value};
 use thiserror::Error;
 use wasmtime::component::types::{ComponentFunc, ComponentItem};
@@ -52,7 +54,7 @@ pub fn component_exports_to_json_schema(
     json!({ "tools": tools_array })
 }
 
-/// Converts a slice of component model [`Val`](Val) objects into a JSON representation.
+/// Converts a slice of component model [`Val`] objects into a JSON representation.
 pub fn vals_to_json(vals: &[Val]) -> Value {
     match vals.len() {
         0 => Value::Null,

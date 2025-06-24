@@ -5,6 +5,7 @@ A Rust library for converting WebAssembly Components to JSON Schema and handling
 ## Usage
 
 ```rust
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json, create_placeholder_results};
 use wasmtime::component::{Component, Type, Val};
 use wasmtime::Engine;
@@ -15,7 +16,8 @@ config.wasm_component_model(true);
 let engine = Engine::new(&config)?;
 
 // Load your component
-let component = Component::from_file(&engine, "path/to/component.wasm")?;
+# let component_wat = r#"(component)"#;
+let component = Component::new(&engine, component_wat)?;
 
 // Get JSON schema for all exported functions
 let schema = component_exports_to_json_schema(&component, &engine, true);
@@ -41,6 +43,8 @@ let json_result = vals_to_json(&wit_vals);
 // This is useful when you need to prepare storage for function return values
 let result_types = vec![Type::String, Type::U32];
 let placeholder_results = create_placeholder_results(&result_types);
+# Ok(())
+# }
 ```
 
 ## Type Conversion Specification
