@@ -5,8 +5,9 @@ A Rust library for converting WebAssembly Components to JSON Schema and handling
 ## Usage
 
 ```rust
-use component2json::{component_exports_to_json_schema, json_to_vals_with_types, vals_to_json};
-use wasmtime::component::{Component, Type};
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+use component2json::{component_exports_to_json_schema, json_to_vals, vals_to_json, create_placeholder_results};
+use wasmtime::component::{Component, Type, Val};
 use wasmtime::Engine;
 
 // Create a WebAssembly engine with component model enabled
@@ -15,7 +16,8 @@ config.wasm_component_model(true);
 let engine = Engine::new(&config)?;
 
 // Load your component
-let component = Component::from_file(&engine, "path/to/component.wasm")?;
+# let component_wat = r#"(component)"#;
+let component = Component::new(&engine, component_wat)?;
 
 // Get JSON schema for all exported functions
 let schema = component_exports_to_json_schema(&component, &engine, true);
@@ -32,10 +34,17 @@ let json_args = serde_json::json!({
     "name": "example",
     "value": 42
 });
-let wit_vals = json_to_vals_with_types(&json_args, &func_param_types)?;
+let wit_vals = json_to_vals(&json_args, &func_param_types)?;
 
 // Convert WIT values back to JSON
 let json_result = vals_to_json(&wit_vals);
+
+// Create placeholder results for function call results
+// This is useful when you need to prepare storage for function return values
+let result_types = vec![Type::String, Type::U32];
+let placeholder_results = create_placeholder_results(&result_types);
+# Ok(())
+# }
 ```
 
 ## Type Conversion Specification
@@ -60,7 +69,7 @@ let json_result = vals_to_json(&wit_vals);
 ```json
 {
     "type": "array",
-    "items": <schema-of-element-type>
+    "items": "SCHEMA_OF_ELEMENT_TYPE"
 }
 ```
 
@@ -70,9 +79,9 @@ let json_result = vals_to_json(&wit_vals);
 {
     "type": "object",
     "properties": {
-        "<field-name>": <schema-of-field-type>
+        "FIELD_NAME": "SCHEMA_OF_FIELD_TYPE"
     },
-    "required": ["<field-names>"]
+    "required": ["FIELD_NAMES"]
 }
 ```
 
@@ -81,9 +90,9 @@ let json_result = vals_to_json(&wit_vals);
 ```json
 {
     "type": "array",
-    "prefixItems": [<schema-of-each-type>],
-    "minItems": <length>,
-    "maxItems": <length>
+    "prefixItems": ["SCHEMA_OF_EACH_TYPE"],
+    "minItems": "LENGTH",
+    "maxItems": "LENGTH"
 }
 ```
 
@@ -95,15 +104,15 @@ let json_result = vals_to_json(&wit_vals);
         {
             "type": "object",
             "properties": {
-                "tag": { "const": "<case-name>" },
-                "val": <schema-of-payload-type>
+                "tag": { "const": "CASE_NAME" },
+                "val": "SCHEMA_OF_PAYLOAD_TYPE"
             },
             "required": ["tag", "val"]
         },
         {
             "type": "object",
             "properties": {
-                "tag": { "const": "<case-name>" }
+                "tag": { "const": "CASE_NAME" }
             },
             "required": ["tag"]
         }
@@ -116,7 +125,7 @@ let json_result = vals_to_json(&wit_vals);
 ```json
 {
     "type": "string",
-    "enum": ["<enum-values>"]
+    "enum": ["ENUM_VALUES"]
 }
 ```
 
@@ -126,7 +135,7 @@ let json_result = vals_to_json(&wit_vals);
 {
     "anyOf": [
         { "type": "null" },
-        <schema-of-inner-type>
+        "SCHEMA_OF_INNER_TYPE"
     ]
 }
 ```
@@ -139,14 +148,14 @@ let json_result = vals_to_json(&wit_vals);
         {
             "type": "object",
             "properties": {
-                "ok": <schema-of-ok-type>
+                "ok": "SCHEMA_OF_OK_TYPE"
             },
             "required": ["ok"]
         },
         {
             "type": "object",
             "properties": {
-                "err": <schema-of-err-type>
+                "err": "SCHEMA_OF_ERR_TYPE"
             },
             "required": ["err"]
         }
@@ -168,6 +177,6 @@ let json_result = vals_to_json(&wit_vals);
 ```json
 {
     "type": "string",
-    "description": "<own'd|borrow'd> resource: <resource-name>"
+    "description": "RESOURCE_TYPE resource: RESOURCE_NAME"
 }
 ```

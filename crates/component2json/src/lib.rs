@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use serde_json::{json, Map, Value};
 use thiserror::Error;
 use wasmtime::component::types::{ComponentFunc, ComponentItem};
@@ -26,6 +28,72 @@ pub enum ValError {
     /// Could not interpret a resource from the JSON field(s).
     #[error("cannot interpret resource from JSON")]
     ResourceError,
+}
+
+/// Given a component and a wasmtime engine, return a full JSON schema of the component's exports.
+///
+/// The `output` parameter determines whether to include the output schema for functions.
+pub fn component_exports_to_json_schema(
+    component: &Component,
+    engine: &Engine,
+    output: bool,
+) -> Value {
+    let mut tools_array = Vec::new();
+
+    for (export_name, export_item) in component.component_type().exports(engine) {
+        gather_exported_functions(
+            export_name,
+            None,
+            &export_item,
+            engine,
+            &mut tools_array,
+            output,
+        );
+    }
+
+    json!({ "tools": tools_array })
+}
+
+/// Converts a slice of component model [`Val`] objects into a JSON representation.
+pub fn vals_to_json(vals: &[Val]) -> Value {
+    match vals.len() {
+        0 => Value::Null,
+        1 => val_to_json(&vals[0]),
+        _ => {
+            let mut map = Map::new();
+            for (i, v) in vals.iter().enumerate() {
+                map.insert(format!("val{i}"), val_to_json(v));
+            }
+            Value::Object(map)
+        }
+    }
+}
+
+/// Converts a JSON object to a vector of `Val` objects based on the provided type mappings for each
+/// field.
+pub fn json_to_vals(value: &Value, types: &[(String, Type)]) -> Result<Vec<Val>, ValError> {
+    match value {
+        Value::Object(obj) => {
+            let mut results = Vec::new();
+            for (name, ty) in types {
+                let value = obj.get(name).ok_or_else(|| {
+                    ValError::ShapeError("object", format!("missing field {}", name))
+                })?;
+                results.push(json_to_val(value, ty)?);
+            }
+            Ok(results)
+        }
+        _ => Err(ValError::ShapeError(
+            "object",
+            format!("expected object, got {:?}", value),
+        )),
+    }
+}
+
+/// Prepares a placeholder `Vec<Val>` to receive the results of a component function call.
+/// The vector will have the correct length and correctly-typed (but empty/zeroed) values.
+pub fn create_placeholder_results(results: &[Type]) -> Vec<Val> {
+    results.iter().map(default_val_for_type).collect()
 }
 
 fn type_to_json_schema(t: &Type) -> Value {
@@ -274,45 +342,6 @@ fn gather_exported_functions(
     }
 }
 
-/// Given a component and a wasmtime engine, return a full JSON schema of the component's exports.
-///
-/// The `output` parameter determines whether to include the output schema for functions.
-pub fn component_exports_to_json_schema(
-    component: &Component,
-    engine: &Engine,
-    output: bool,
-) -> Value {
-    let mut tools_array = Vec::new();
-
-    for (export_name, export_item) in component.component_type().exports(engine) {
-        gather_exported_functions(
-            export_name,
-            None,
-            &export_item,
-            engine,
-            &mut tools_array,
-            output,
-        );
-    }
-
-    json!({ "tools": tools_array })
-}
-
-/// Converts a slice of component model [`Val`](Val) objects into a JSON representation.
-pub fn vals_to_json(vals: &[Val]) -> Value {
-    match vals.len() {
-        0 => Value::Null,
-        1 => val_to_json(&vals[0]),
-        _ => {
-            let mut map = Map::new();
-            for (i, v) in vals.iter().enumerate() {
-                map.insert(format!("val{i}"), val_to_json(v));
-            }
-            Value::Object(map)
-        }
-    }
-}
-
 fn val_to_json(val: &Val) -> Value {
     match val {
         Val::Bool(b) => Value::Bool(*b),
@@ -384,7 +413,7 @@ fn val_to_json(val: &Val) -> Value {
     }
 }
 
-pub fn json_to_val(value: &Value, ty: &Type) -> Result<Val, ValError> {
+fn json_to_val(value: &Value, ty: &Type) -> Result<Val, ValError> {
     match ty {
         Type::Bool => match value {
             Value::Bool(b) => Ok(Val::Bool(*b)),
@@ -599,27 +628,6 @@ pub fn json_to_val(value: &Value, ty: &Type) -> Result<Val, ValError> {
     }
 }
 
-/// Converts a JSON object to a vector of `Val` objects based on the provided type mappings for each
-/// field.
-pub fn json_to_vals(value: &Value, types: &[(String, Type)]) -> Result<Vec<Val>, ValError> {
-    match value {
-        Value::Object(obj) => {
-            let mut results = Vec::new();
-            for (name, ty) in types {
-                let value = obj.get(name).ok_or_else(|| {
-                    ValError::ShapeError("object", format!("missing field {}", name))
-                })?;
-                results.push(json_to_val(value, ty)?);
-            }
-            Ok(results)
-        }
-        _ => Err(ValError::ShapeError(
-            "object",
-            format!("expected object, got {:?}", value),
-        )),
-    }
-}
-
 fn default_val_for_type(ty: &Type) -> Val {
     match ty {
         Type::Bool => Val::Bool(false),
@@ -669,12 +677,6 @@ fn default_val_for_type(ty: &Type) -> Val {
             panic!("Cannot create a placeholder for a resource type.")
         }
     }
-}
-
-/// Prepares a placeholder `Vec<Val>` to receive the results of a component function call.
-/// The vector will have the correct length and correctly-typed (but empty/zeroed) values.
-pub fn create_placeholder_results(results: &[Type]) -> Vec<Val> {
-    results.iter().map(default_val_for_type).collect()
 }
 
 #[cfg(test)]
