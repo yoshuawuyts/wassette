@@ -78,7 +78,7 @@ jobs:
             echo "tag=$VERSION" >> $GITHUB_OUTPUT
             echo "latest=true" >> $GITHUB_OUTPUT
           else
-            echo "tag=main" >> $GITHUB_OUTPUT
+            echo "tag=$GITHUB_SHA" >> $GITHUB_OUTPUT
             echo "latest=false" >> $GITHUB_OUTPUT
           fi
       - name: Publish ${{ matrix.component.name }}
