@@ -620,32 +620,6 @@ pub fn json_to_vals(value: &Value, types: &[(String, Type)]) -> Result<Vec<Val>,
     }
 }
 
-pub fn json_to_val_return(value: &Value, types: &[Type]) -> Result<Vec<Val>, ValError> {
-    if types.len() == 1 {
-        return Ok(vec![json_to_val(value, &types[0])?]);
-    }
-
-    match value {
-        Value::Array(arr) => {
-            if arr.len() != types.len() {
-                return Err(ValError::ShapeError(
-                    "array",
-                    format!("expected {} items, got {}", types.len(), arr.len()),
-                ));
-            }
-            let mut results = Vec::new();
-            for (value, ty) in arr.iter().zip(types) {
-                results.push(json_to_val(value, ty)?);
-            }
-            Ok(results)
-        }
-        _ => Err(ValError::ShapeError(
-            "array",
-            format!("expected array, got {:?}", value),
-        )),
-    }
-}
-
 fn default_val_for_type(ty: &Type) -> Val {
     match ty {
         Type::Bool => Val::Bool(false),
@@ -1362,16 +1336,6 @@ mod tests {
     }
 
     #[test]
-    fn test_json_to_val_return() {
-        let types = vec![Type::String, Type::S32];
-        let value = json!(["John", 30]);
-        let vals = json_to_val_return(&value, &types).unwrap();
-        assert_eq!(vals.len(), 2);
-        assert!(matches!(&vals[0], Val::String(s) if s == "John"));
-        assert!(matches!(&vals[1], Val::S32(30)));
-    }
-
-    #[test]
     fn test_json_to_val_errors() {
         let bool_ty = Type::Bool;
         let string_val = json!("true");
@@ -1396,16 +1360,6 @@ mod tests {
             "age": "30"
         });
         assert!(json_to_vals(&invalid_type, &types).is_err());
-    }
-
-    #[test]
-    fn test_json_to_val_return_errors() {
-        let types = vec![Type::String, Type::S32];
-        let wrong_length = json!(["John"]);
-        assert!(json_to_val_return(&wrong_length, &types).is_err());
-
-        let invalid_type = json!(["John", "30"]);
-        assert!(json_to_val_return(&invalid_type, &types).is_err());
     }
 
     #[test]

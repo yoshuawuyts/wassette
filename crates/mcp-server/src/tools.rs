@@ -5,8 +5,7 @@ use anyhow::Result;
 use rmcp::model::{CallToolRequestParam, CallToolResult, Content, Tool};
 use rmcp::{Peer, RoleServer};
 use serde_json::{json, Value};
-use tracing::instrument;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, instrument};
 use weld::LifecycleManager;
 
 use crate::components::{
