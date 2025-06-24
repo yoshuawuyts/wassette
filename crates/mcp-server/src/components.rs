@@ -9,7 +9,7 @@ use tracing::{debug, error, info, instrument};
 use weld::LifecycleManager;
 
 #[instrument(skip(lifecycle_manager))]
-pub async fn get_component_tools(lifecycle_manager: &LifecycleManager) -> Result<Vec<Tool>> {
+pub(crate) async fn get_component_tools(lifecycle_manager: &LifecycleManager) -> Result<Vec<Tool>> {
     debug!("Listing components");
     let component_ids = lifecycle_manager.list_components().await;
 

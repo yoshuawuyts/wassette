@@ -23,7 +23,7 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 mod wasistate;
 pub use wasistate::{create_wasi_state_template_from_policy, WasiStateTemplate};
 
-pub struct WasiState {
+struct WasiState {
     ctx: wasmtime_wasi::p2::WasiCtx,
     table: wasmtime_wasi::ResourceTable,
     http: wasmtime_wasi_http::WasiHttpCtx,
@@ -49,7 +49,7 @@ impl WasiHttpView for WasiState {
 }
 
 impl WasiStateTemplate {
-    pub fn build(&self) -> anyhow::Result<WasiState> {
+    fn build(&self) -> anyhow::Result<WasiState> {
         let mut ctx_builder = WasiCtxBuilder::new();
         if self.allow_stdout {
             ctx_builder.inherit_stdout();
@@ -92,7 +92,7 @@ struct ToolInfo {
 }
 
 #[derive(Debug, Default)]
-pub struct ComponentRegistry {
+struct ComponentRegistry {
     tool_map: HashMap<String, Vec<ToolInfo>>,
     component_map: HashMap<String, Vec<String>>,
 }
@@ -170,39 +170,24 @@ impl ComponentRegistry {
 /// A manager that handles the dynamic lifecycle of WebAssembly components.
 #[derive(Clone)]
 pub struct LifecycleManager {
-    pub engine: Arc<Engine>,
-    pub components: Arc<RwLock<HashMap<String, Arc<Component>>>>,
-    pub registry: Arc<RwLock<ComponentRegistry>>,
-    pub oci_client: Arc<oci_wasm::WasmClient>,
-    pub http_client: reqwest::Client,
-    pub plugin_dir: PathBuf,
-    pub wasi_state_template: WasiStateTemplate,
+    engine: Arc<Engine>,
+    components: Arc<RwLock<HashMap<String, Arc<Component>>>>,
+    registry: Arc<RwLock<ComponentRegistry>>,
+    oci_client: Arc<oci_wasm::WasmClient>,
+    http_client: reqwest::Client,
+    plugin_dir: PathBuf,
+    wasi_state_template: Arc<WasiStateTemplate>,
 }
 
 impl LifecycleManager {
-    /// Creates a lifecycle manager, loading the current components from the given plugin directory
-    /// and using the default OCI and http client
-    ///
-    /// To provide custom configured clients, use the [`LifecycleManager::new_with_clients`] method.
-    #[instrument(skip(engine), fields(plugin_dir = %plugin_dir.as_ref().display()))]
-    pub async fn new(engine: Arc<Engine>, plugin_dir: impl AsRef<Path>) -> Result<Self> {
-        Self::new_with_clients(
-            engine,
-            plugin_dir,
-            oci_client::Client::default(),
-            reqwest::Client::default(),
-        )
-        .await
-    }
-
     /// Creates a lifecycle manager from configuration parameters
     /// This is the primary way to create a LifecycleManager for most use cases
     #[instrument(skip_all, fields(plugin_dir = %plugin_dir.as_ref().display()))]
-    pub async fn create(
+    pub async fn new(
         plugin_dir: impl AsRef<Path>,
         policy_file: Option<impl AsRef<Path>>,
     ) -> Result<Self> {
-        Self::create_with_clients(
+        Self::new_with_clients(
             plugin_dir,
             policy_file,
             oci_client::Client::default(),
@@ -213,7 +198,7 @@ impl LifecycleManager {
 
     /// Creates a lifecycle manager from configuration parameters with custom clients
     #[instrument(skip_all, fields(plugin_dir = %plugin_dir.as_ref().display()))]
-    pub async fn create_with_clients(
+    pub async fn new_with_clients(
         plugin_dir: impl AsRef<Path>,
         policy_file: Option<impl AsRef<Path>>,
         oci_client: oci_client::Client,
@@ -248,27 +233,9 @@ impl LifecycleManager {
         .await
     }
 
-    /// Creates a lifecycle manager with custom clients and default WASI state template
-    #[instrument(skip_all, fields(plugin_dir = %plugin_dir.as_ref().display()))]
-    pub async fn new_with_clients(
-        engine: Arc<Engine>,
-        plugin_dir: impl AsRef<Path>,
-        oci_cli: oci_client::Client,
-        http_client: reqwest::Client,
-    ) -> Result<Self> {
-        Self::new_with_policy(
-            engine,
-            plugin_dir,
-            oci_cli,
-            http_client,
-            WasiStateTemplate::default(),
-        )
-        .await
-    }
-
     /// Creates a lifecycle manager with custom clients and WASI state template
     #[instrument(skip_all, fields(plugin_dir = %plugin_dir.as_ref().display()))]
-    pub async fn new_with_policy(
+    async fn new_with_policy(
         engine: Arc<Engine>,
         plugin_dir: impl AsRef<Path>,
         oci_cli: oci_client::Client,
@@ -315,7 +282,7 @@ impl LifecycleManager {
             oci_client: Arc::new(oci_wasm::WasmClient::new(oci_cli)),
             http_client,
             plugin_dir: plugin_dir.as_ref().to_path_buf(),
-            wasi_state_template,
+            wasi_state_template: Arc::new(wasi_state_template),
         })
     }
 
@@ -766,12 +733,8 @@ mod tests {
     }
 
     async fn create_test_manager() -> Result<TestLifecycleManager> {
-        let mut config = wasmtime::Config::new();
-        config.wasm_component_model(true);
-        config.async_support(true);
-        let engine = Arc::new(wasmtime::Engine::new(&config)?);
         let tempdir = tempfile::tempdir()?;
-        let manager = LifecycleManager::new(engine, &tempdir).await?;
+        let manager = LifecycleManager::new(&tempdir, None as Option<std::path::PathBuf>).await?;
         Ok(TestLifecycleManager {
             manager,
             _tempdir: tempdir,

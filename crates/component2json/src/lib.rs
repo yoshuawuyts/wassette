@@ -274,6 +274,9 @@ fn gather_exported_functions(
     }
 }
 
+/// Given a component and a wasmtime engine, return a full JSON schema of the component's exports.
+///
+/// The `output` parameter determines whether to include the output schema for functions.
 pub fn component_exports_to_json_schema(
     component: &Component,
     engine: &Engine,
@@ -295,6 +298,7 @@ pub fn component_exports_to_json_schema(
     json!({ "tools": tools_array })
 }
 
+/// Converts a slice of component model [`Val`](Val) objects into a JSON representation.
 pub fn vals_to_json(vals: &[Val]) -> Value {
     match vals.len() {
         0 => Value::Null,
@@ -595,6 +599,8 @@ pub fn json_to_val(value: &Value, ty: &Type) -> Result<Val, ValError> {
     }
 }
 
+/// Converts a JSON object to a vector of `Val` objects based on the provided type mappings for each
+/// field.
 pub fn json_to_vals(value: &Value, types: &[(String, Type)]) -> Result<Vec<Val>, ValError> {
     match value {
         Value::Object(obj) => {
