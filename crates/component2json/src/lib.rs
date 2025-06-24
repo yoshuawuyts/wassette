@@ -274,6 +274,9 @@ fn gather_exported_functions(
     }
 }
 
+/// Given a component and a wasmtime engine, return a full JSON schema of the component's exports.
+///
+/// The `output` parameter determines whether to include the output schema for functions.
 pub fn component_exports_to_json_schema(
     component: &Component,
     engine: &Engine,
@@ -295,6 +298,7 @@ pub fn component_exports_to_json_schema(
     json!({ "tools": tools_array })
 }
 
+/// Converts a slice of component model [`Val`](Val) objects into a JSON representation.
 pub fn vals_to_json(vals: &[Val]) -> Value {
     match vals.len() {
         0 => Value::Null,
@@ -595,6 +599,8 @@ pub fn json_to_val(value: &Value, ty: &Type) -> Result<Val, ValError> {
     }
 }
 
+/// Converts a JSON object to a vector of `Val` objects based on the provided type mappings for each
+/// field.
 pub fn json_to_vals(value: &Value, types: &[(String, Type)]) -> Result<Vec<Val>, ValError> {
     match value {
         Value::Object(obj) => {
@@ -610,32 +616,6 @@ pub fn json_to_vals(value: &Value, types: &[(String, Type)]) -> Result<Vec<Val>,
         _ => Err(ValError::ShapeError(
             "object",
             format!("expected object, got {:?}", value),
-        )),
-    }
-}
-
-pub fn json_to_val_return(value: &Value, types: &[Type]) -> Result<Vec<Val>, ValError> {
-    if types.len() == 1 {
-        return Ok(vec![json_to_val(value, &types[0])?]);
-    }
-
-    match value {
-        Value::Array(arr) => {
-            if arr.len() != types.len() {
-                return Err(ValError::ShapeError(
-                    "array",
-                    format!("expected {} items, got {}", types.len(), arr.len()),
-                ));
-            }
-            let mut results = Vec::new();
-            for (value, ty) in arr.iter().zip(types) {
-                results.push(json_to_val(value, ty)?);
-            }
-            Ok(results)
-        }
-        _ => Err(ValError::ShapeError(
-            "array",
-            format!("expected array, got {:?}", value),
         )),
     }
 }
@@ -1356,16 +1336,6 @@ mod tests {
     }
 
     #[test]
-    fn test_json_to_val_return() {
-        let types = vec![Type::String, Type::S32];
-        let value = json!(["John", 30]);
-        let vals = json_to_val_return(&value, &types).unwrap();
-        assert_eq!(vals.len(), 2);
-        assert!(matches!(&vals[0], Val::String(s) if s == "John"));
-        assert!(matches!(&vals[1], Val::S32(30)));
-    }
-
-    #[test]
     fn test_json_to_val_errors() {
         let bool_ty = Type::Bool;
         let string_val = json!("true");
@@ -1390,16 +1360,6 @@ mod tests {
             "age": "30"
         });
         assert!(json_to_vals(&invalid_type, &types).is_err());
-    }
-
-    #[test]
-    fn test_json_to_val_return_errors() {
-        let types = vec![Type::String, Type::S32];
-        let wrong_length = json!(["John"]);
-        assert!(json_to_val_return(&wrong_length, &types).is_err());
-
-        let invalid_type = json!(["John", "30"]);
-        assert!(json_to_val_return(&invalid_type, &types).is_err());
     }
 
     #[test]

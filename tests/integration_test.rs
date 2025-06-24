@@ -106,7 +106,7 @@ async fn setup_lifecycle_manager_with_client(
     let tempdir = tempfile::tempdir()?;
 
     let manager = Arc::new(
-        LifecycleManager::create_with_clients(
+        LifecycleManager::new_with_clients(
             &tempdir,
             None::<&str>,
             oci_client::Client::new(oci_client::client::ClientConfig {
@@ -192,7 +192,7 @@ async fn test_fetch_component_workflow() -> Result<()> {
 async fn start_https_server(
     wasm_content: Vec<u8>,
 ) -> Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use rustls::pki_types::PrivateKeyDer;
     use tokio_rustls::{rustls, TlsAcceptor};
 
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -201,7 +201,7 @@ async fn start_https_server(
     let addr = listener.local_addr()?;
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
-    let cert_der = CertificateDer::from(cert.cert.der().clone());
+    let cert_der = cert.cert.der().clone();
     let key_bytes = cert.key_pair.serialize_der();
     let key_der = PrivateKeyDer::try_from(key_bytes)
         .map_err(|e| anyhow::anyhow!("Failed to convert private key: {}", e))?;
@@ -437,17 +437,15 @@ async fn test_stdio_transport() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Check if the process is still running
-    if let Ok(exit_status) = child.try_wait() {
-        if let Some(status) = exit_status {
-            // Process has exited, read stderr to see what went wrong
-            let mut stderr_output = String::new();
-            let _ = stderr.read_line(&mut stderr_output).await;
-            return Err(anyhow::anyhow!(
-                "Server process exited with status: {:?}, stderr: {}",
-                status,
-                stderr_output
-            ));
-        }
+    if let Ok(Some(status)) = child.try_wait() {
+        // Process has exited, read stderr to see what went wrong
+        let mut stderr_output = String::new();
+        let _ = stderr.read_line(&mut stderr_output).await;
+        return Err(anyhow::anyhow!(
+            "Server process exited with status: {:?}, stderr: {}",
+            status,
+            stderr_output
+        ));
     }
 
     // Send MCP initialize request

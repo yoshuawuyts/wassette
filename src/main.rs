@@ -126,7 +126,7 @@ impl ServerHandler for McpServer {
         _ctx: RequestContext<RoleServer>,
     ) -> Pin<Box<dyn Future<Output = Result<ListToolsResult, ErrorData>> + Send + 'a>> {
         Box::pin(async move {
-            let result = handle_tools_list(serde_json::Value::Null, &self.lifecycle_manager).await;
+            let result = handle_tools_list(&self.lifecycle_manager).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
                     ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
@@ -204,7 +204,7 @@ async fn main() -> Result<()> {
             let components_dir = PathBuf::from(plugin_dir);
 
             let lifecycle_manager =
-                LifecycleManager::create(&components_dir, policy_file.as_deref()).await?;
+                LifecycleManager::new(&components_dir, policy_file.as_deref()).await?;
 
             let server = McpServer::new(lifecycle_manager);
 

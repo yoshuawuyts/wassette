@@ -63,7 +63,7 @@ pub fn create_wasi_state_template_from_policy(
     })
 }
 
-pub fn extract_env_vars(policy: &PolicyDocument) -> anyhow::Result<HashMap<String, String>> {
+pub(crate) fn extract_env_vars(policy: &PolicyDocument) -> anyhow::Result<HashMap<String, String>> {
     let mut env_vars = HashMap::new();
     if let Some(env_perms) = &policy.permissions.environment {
         if let Some(env_allow_vec) = &env_perms.allow {
@@ -77,7 +77,7 @@ pub fn extract_env_vars(policy: &PolicyDocument) -> anyhow::Result<HashMap<Strin
     Ok(env_vars)
 }
 
-pub fn extract_network_perms(policy: &PolicyDocument) -> NetworkPermissions {
+pub(crate) fn extract_network_perms(policy: &PolicyDocument) -> NetworkPermissions {
     if let Some(network_perms) = &policy.permissions.network {
         let has_network_perms =
             network_perms.allow.is_some() && !network_perms.allow.as_ref().unwrap().is_empty();
@@ -91,7 +91,7 @@ pub fn extract_network_perms(policy: &PolicyDocument) -> NetworkPermissions {
     }
 }
 
-pub fn extract_storage_permissions(
+pub(crate) fn extract_storage_permissions(
     policy: &PolicyDocument,
     plugin_dir: &Path,
 ) -> anyhow::Result<Vec<PreopenedDir>> {
@@ -118,7 +118,7 @@ pub fn extract_storage_permissions(
     Ok(preopened_dirs)
 }
 
-pub fn calculate_permissions(
+pub(crate) fn calculate_permissions(
     access_types: &[AccessType],
 ) -> (wasmtime_wasi::FilePerms, wasmtime_wasi::DirPerms) {
     let file_perms = access_types
