@@ -5,7 +5,7 @@ A Rust library for converting WebAssembly Components to JSON Schema and handling
 ## Usage
 
 ```rust
-use component2json::{component_exports_to_json_schema, json_to_vals_with_types, vals_to_json};
+use component2json::{component_exports_to_json_schema, json_to_vals, val_to_json};
 use wasmtime::component::{Component, Type};
 use wasmtime::Engine;
 
@@ -32,7 +32,7 @@ let json_args = serde_json::json!({
     "name": "example",
     "value": 42
 });
-let wit_vals = json_to_vals_with_types(&json_args, &func_param_types)?;
+let wit_vals = json_to_vals(&json_args, &func_param_types)?;
 
 // Convert WIT values back to JSON
 let json_result = vals_to_json(&wit_vals);
