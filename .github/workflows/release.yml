@@ -24,7 +24,7 @@ jobs:
             os: ubuntu-latest
             name: weld-mcp-server-linux-amd64
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             name: weld-mcp-server-linux-arm64
           # macOS targets
           - target: x86_64-apple-darwin
