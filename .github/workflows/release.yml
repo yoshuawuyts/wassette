@@ -16,32 +16,26 @@ env:
 jobs:
   build:
     name: Build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           # Linux targets
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
             name: weld-mcp-server-linux-amd64
-          # - target: aarch64-unknown-linux-gnu
-          # os: ubuntu-24.04-arm64
-          # name: weld-mcp-server-linux-arm64
+          - target: aarch64-unknown-linux-gnu
+            name: weld-mcp-server-linux-arm64
           # macOS targets
           - target: x86_64-apple-darwin
-            os: macos-latest
             name: weld-mcp-server-darwin-amd64
           - target: aarch64-apple-darwin
-            os: macos-latest
             name: weld-mcp-server-darwin-arm64
           # Windows targets
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
             name: weld-mcp-server-windows-amd64.exe
-          # - target: aarch64-pc-windows-msvc
-          # os: windows-11-arm64
-          # name: weld-mcp-server-windows-arm64.exe
+          - target: aarch64-pc-windows-msvc
+            name: weld-mcp-server-windows-arm64.exe
 
     steps:
       - name: Checkout repository
@@ -55,26 +49,28 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
+      - name: Install cross
+        run: cargo binstall --no-confirm cross
+
       - name: Add WASM target
         run: rustup target add wasm32-wasip2
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cross build --release --target ${{ matrix.target }} --features vendored-openssl
 
       - name: Prepare binary (Unix)
-        if: matrix.os != 'windows-latest'
+        if: "!contains(matrix.target, 'windows')"
         run: |
           cd target/${{ matrix.target }}/release
           tar czvf ../../../${{ matrix.name }}.tar.gz weld-mcp-server
           cd -
 
       - name: Prepare binary (Windows)
-        if: matrix.os == 'windows-latest'
+        if: contains(matrix.target, 'windows')
         run: |
           cd target/${{ matrix.target }}/release
           7z a ../../../${{ matrix.name }}.zip weld-mcp-server.exe
           cd -
-        shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
