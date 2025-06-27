@@ -124,22 +124,20 @@ jobs:
             - [AMD64 (zip)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/weld-mcp-server-windows-amd64.exe.zip)
             - [ARM64 (zip)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/weld-mcp-server-windows-arm64.exe.zip)
 
-            ## Installation
+            ## Install
 
-            ### Linux/macOS
+            ### All Platforms (Shell Script)
+
             ```bash
-            # Download and extract for your platform (example for Linux AMD64)
-            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/weld-mcp-server-linux-amd64.tar.gz | tar xz
-            chmod +x weld-mcp-server
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
             ```
 
-            ### Windows
-            Download and extract the appropriate `.zip` file for your architecture.
+            This will detect your platform and install the latest `weld-mcp-server` binary to your `$PATH`.
 
             ## Usage
             ```bash
             # Start the MCP server
-            ./weld-mcp-server serve --http --policy-file policy.yaml
+            weld-mcp-server serve --http --policy-file policy.yaml
             ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
