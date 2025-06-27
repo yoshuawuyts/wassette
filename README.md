@@ -1,19 +1,48 @@
 # weld-mcp-server
 
-**Dynamically load and run WebAssembly MCP tools in secure sandboxes.** Weld transforms your AI agent workflows from risky native tool execution to secure, isolated environments where you control exactly what tools can access.
+Weld is a secure and open source MCP server that runs on top of WebAssembly (Wasm). It is designed to securely execute untrusted tools by embedding a Wasm runtime and applying capability-based policies to control access to system resources. It uses the sandboxing and abstraction provided by the Wasm [Component Model](https://github.com/WebAssembly/component-model) to ensure tools can be executed safely and easily without compromising the host system.
 
-<!-- insert demo gif here -->
+Please read the rest of the README for more background, but the TL;DR is this:
 
-It's an open-source MCP server that works as a CLI tool with Claude Desktop, Cursor, VSCode, and other MCP-compatible agents.
+`weld` essentially acts as a _virtual MCP server_, with built-in observability, resource quotas, and handles infrastructure complexity automatically.
 
-- 🔧 **Dynamic Loading**: Load WebAssembly components on-demand from OCI registries, URLs, or local files - no restart required.
-- 🔒 **Secure Sandboxes**: Each tool runs in isolated WebAssembly environments with capability-based policies controlling file/network access.
-- 🎯 **Runtime Introspection**: Automatically discover tool capabilities and exported functions without manual configuration.
-- 🧩 **Composable Tools**: Mix and match components from different sources in real-time - build workflows dynamically.
-- 🚀 **Developer-Friendly**: Write functions that compile to WASM components, not entire servers - focus on logic, not infrastructure.
-- ⚡ **Hot-Swap Tools**: Load, unload, and replace components without downtime - perfect for experimentation and development.
+## 🚩 Purpose
 
-🦺 This project is in early development and actively evolving. Expect rapid iteration, breaking changes, and responsiveness to feedback. Please submit issues or reach out with questions!
+### Problem Statement
+
+A popular use scenario for MCP today is to run the server as a standalone process on a machine that talks to clients over stdio or a socket. Running these servers natively poses security risks, such as "my mcp-client calls the tool to read a file, and for some reason the tool writes to a file on my machine", "the tool opens a socket to a remote machine and sends data to it", or "I downloaded this open source mcp-server, but it has a vulnerability that allows an attacker to execute arbitrary code on my machine". This is the same problem as running untrusted code on your machine, but mcp-clients make them much easier to install on your machine and run.
+
+### Who is the target audience?
+
+1. _Developers_ who want to focus on writing the business logic for MCP tools, instead of worrying about the infrastructure.
+
+2. _DevOps engineers_ who want the tools to be able to run everywhere and have a great observability story and tools are secured by design.
+
+3. _Users_ who want to run a trusted mcp-server on their machine that is proven to securely execute untrusted tools.
+
+4. _Platform providers_ who want to provide a serverless experience for their users.
+
+### What are the current solutions?
+
+1. Package and distribute the server as Docker images. This is perhaps the most common way to run MCP servers securely today, because it works with existing tooling and infrastructure and requires no changes to the server code. One could argue that containers are not a secure boundary, but they are a good starting point. The harder problem is how to apply security policies to the container like "how do I know what HTTP domain is this tool calling to?". [The Docker MCP Catalog](https://docs.docker.com/ai/mcp-catalog-and-toolkit/catalog/) runs each MCP server as a container - providing isolation and portability.
+2. Running binaries directly using `npx` or `uvx`. This is a simple way to run MCP servers (and often the default way MCP servers document how to use it), but it is not secure. It is easy to run a tool that has a vulnerability or malicious code that can read/write files on your machine, open sockets, or even execute arbitrary code.
+3. Centralized MCP server that runs WebAssembly-based tools locally (think tools like [mcp.run](https://mcp.run)). This has the advantage of running tools in tiny sandboxes which incur less memory overhead than containers. However, most of these tools still require custom ABIs and libraries and are not compatible with each other.
+
+### So why does this exist?
+
+We wanted to build an entirely open source tool that enables developers to define tools via the Component Model, which means they are easy to reuse and compose in addition to running with low memory requirements and in a secure sandbox. They also let anyone see exactly what features the tool is requesting and allows a server to fulfill those requests in a secure way. This is a significant improvement over the current state of MCP servers, which are either arbitrary code or require custom ABIs and libraries, and are not compatible with each other.
+
+So what is this project aiming to be?
+
+1. One centralized open-source mcp-server, written in a memory safe, high performance language that embeds a WebAssembly runtime (e.g. [Wasmtime](https://github.com/bytecodealliance/wasmtime) or [hyperlight-wasm](https://github.com/hyperlight-dev/hyperlight-wasm)), acting as a minimal trusted computing base (TCB).
+2. `weld` will implement allow/deny lists for file paths, network endpoints, and system calls using capability-based policy like [policy-mcp-rs](https://github.com/semcp/policy-mcp-rs).
+3. Untrusted tool code will be distributed as WebAssembly OCI artifacts in OCI registries, and be loaded into the trusted layer upon signature verification. Each tool will have a discrete set of capabilities. For example, tool A needs to read `./data`; not network; tool B needs read/write to `/assets` and outbound HTTP only to `api.company.com:443`.
+
+### What about the developer experience?
+
+Developers will write MCP tools as normal functions that can be compiled to WebAssembly Components, instead of developing servers. This is a significant paradigm shift and offers a completely different experience than writing MCP servers as it currently stands. We are fully aware that current MCP server code would need to be rewritten for retargeting to Wasm but the security benefits and flexibility of the Component Model are worth it.
+
+If you are interested in learning more about what programming language supports WebAssembly, you can check out [this page](https://developer.fermyon.com/wasm-languages/webassembly-language-support).
 
 ## Install
 
@@ -47,6 +76,7 @@ Add this to your VSCode or Cursor settings:
 1. **Start the weld server:**
 
    ```bash
+   # Run the following cmd in your terminal to start the Weld MCP server
    weld-mcp-server serve --http --policy-file policy.yaml
    ```
 
@@ -56,18 +86,21 @@ Add this to your VSCode or Cursor settings:
    <!-- update to point to weld pkgs -->
 
    ```
+   # Enter the following prompt into your AI client
    Load the filesystem tools from oci://ghcr.io/duffney/filesystem:latest
    ```
 
    **From Local File:**
 
    ```
+   # Enter the following prompt into your AI client
    Load component from file:///path/to/my-tools.wasm
    ```
 
 3. **Use the newly loaded tools immediately:**
 
    ```
+   # Enter the following prompt into your AI client
    Use the read-file tool to get the contents of the Justfile at the root of this repo
    ```
 
@@ -91,10 +124,8 @@ Add this to your VSCode or Cursor settings:
 
 See the `examples/` directory for more components you can build and load dynamically.
 
-## How it works
-
-Unlike traditional MCP servers that require pre-installed tools, `weld` **dynamically loads WebAssembly components at runtime** - letting your agents discover, load, and use new tools on-demand from OCI registries or local files. Each component runs in an isolated WebAssembly sandbox with no direct host access, and security is enforced through YAML policy files that define exactly what each component can access - filesystem paths, network endpoints, and environment variables. This deny-by-default approach provides container-level security with WebAssembly performance, giving you complete observability and control over tool composition.
-
 ## Contributing
 
-We welcome contributions! Check our [issues](https://github.com/semcp/weld-mcp-server/issues) for open tasks or create a new issue to discuss your ideas. Submit pull requests to the `main` branch - we'll review them promptly.
+We welcome contributions to Weld! Please check through our issue queue for any open issues and comment if you'd like to work on one. If you have an idea for a new feature or improvement, please open an issue to discuss it first as things are moving quickly and we may already be working on it or have something in flight!
+
+Any code should be pushed to a fork of this repository and a pull request opened against the `main` branch. Maintainers will then review your code as soon as possible and provide feedback. We will try to be responsive, but please be patient as we are a small team and may not be able to respond immediately
