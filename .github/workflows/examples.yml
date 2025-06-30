@@ -23,7 +23,7 @@ jobs:
     - uses: acifani/setup-tinygo@db56321a62b9a67922bb9ac8f9d085e218807bb3 # v0.2.1
       with:
         tinygo-version: ${{ env.TINYGO_VERSION }}
-    - uses: bytecodealliance/actions/wasm-tools/setup@d742827944dcb656569399571a8a45261b5089f6 # v1.1.1
+    - uses: bytecodealliance/actions/wasm-tools/setup@3b93676295fd6f7eaa7af2c2785539e052fa8349 # v1.1.1
     - run: ./scripts/install-protobuf.sh
       shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1.13.0
