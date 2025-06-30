@@ -59,7 +59,7 @@ jobs:
         run: rustup target add wasm32-wasip2
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release
 
       - name: Prepare binary (Unix)
         if: "!contains(matrix.target, 'windows')"
