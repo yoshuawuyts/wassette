@@ -655,7 +655,7 @@ async fn test_tool_list_notification() -> Result<()> {
         .as_array()
         .unwrap();
     let initial_tool_count = initial_tools.len();
-    println!("Initial tool count: {}", initial_tool_count);
+    println!("Initial tool count: {initial_tool_count}");
 
     // Build a component to load
     let component_path = build_fetch_component().await?;
@@ -741,14 +741,12 @@ async fn test_tool_list_notification() -> Result<()> {
         .as_array()
         .unwrap();
     let updated_tool_count = updated_tools.len();
-    println!("Updated tool count: {}", updated_tool_count);
+    println!("Updated tool count: {updated_tool_count}");
 
     // Verify that the tool count increased after loading the component
     assert!(
         updated_tool_count > initial_tool_count,
-        "Tool count should have increased from {} to {}, but it didn't",
-        initial_tool_count,
-        updated_tool_count
+        "Tool count should have increased from {initial_tool_count} to {updated_tool_count}, but it didn't"
     );
     println!("✓ Tool count increased as expected after loading component");
 
@@ -761,8 +759,7 @@ async fn test_tool_list_notification() -> Result<()> {
     // The fetch component should add a "fetch" tool
     assert!(
         updated_tool_names.contains(&"fetch".to_string()),
-        "Expected 'fetch' tool from loaded component, but found tools: {:?}",
-        updated_tool_names
+        "Expected 'fetch' tool from loaded component, but found tools: {updated_tool_names:?}"
     );
     println!("✓ New tools from loaded component are present in the list");
 
