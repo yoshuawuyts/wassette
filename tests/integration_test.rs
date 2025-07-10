@@ -223,7 +223,7 @@ async fn start_https_server(
                 let tls_stream = match acceptor.accept(stream).await {
                     Ok(tls_stream) => tls_stream,
                     Err(e) => {
-                        eprintln!("TLS handshake failed: {:?}", e);
+                        eprintln!("TLS handshake failed: {e:?}");
                         return;
                     }
                 };
@@ -250,7 +250,7 @@ async fn start_https_server(
                 });
 
                 if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
-                    eprintln!("Error serving connection: {:?}", err);
+                    eprintln!("Error serving connection: {err:?}");
                 }
             });
         }
@@ -279,7 +279,7 @@ async fn test_load_component_from_https() -> Result<()> {
     let (addr, _server_handle) = start_https_server(wasm_bytes).await?;
 
     // Load from HTTPS
-    let https_url = format!("https://{}/fetch_rs.wasm", addr);
+    let https_url = format!("https://{addr}/fetch_rs.wasm");
     manager.load_component(&https_url).await?;
 
     // Verify component was loaded
@@ -312,7 +312,7 @@ async fn test_load_component_from_oci() -> Result<()> {
     // Start OCI registry using testcontainers
     let container = setup_registry().await?;
     let registry_port = container.get_host_port_ipv4(DOCKER_REGISTRY_PORT).await?;
-    let registry_url = format!("localhost:{}", registry_port);
+    let registry_url = format!("localhost:{registry_port}");
 
     // Give the registry a moment to fully start
     sleep(Duration::from_millis(500)).await;
@@ -327,7 +327,7 @@ async fn test_load_component_from_oci() -> Result<()> {
     });
 
     let wasm_client = WasmClient::new(oci_client);
-    let reference = format!("{}/fetch_rs:latest", registry_url);
+    let reference = format!("{registry_url}/fetch_rs:latest");
     let oci_reference: oci_client::Reference = reference.parse()?;
 
     // Push to registry
@@ -342,7 +342,7 @@ async fn test_load_component_from_oci() -> Result<()> {
         .await?;
 
     // Load from OCI
-    let oci_url = format!("oci://{}", reference);
+    let oci_url = format!("oci://{reference}");
     manager.load_component(&oci_url).await?;
 
     // Verify component was loaded
@@ -380,7 +380,7 @@ async fn test_load_component_https_404() -> Result<()> {
     let (addr, _server_handle) = start_https_server(Vec::new()).await?;
 
     // Try to load from HTTPS with 404
-    let https_url = format!("https://{}/nonexistent.wasm", addr);
+    let https_url = format!("https://{addr}/nonexistent.wasm");
     let result = manager.load_component(&https_url).await;
     assert!(result.is_err());
     let error = result.unwrap_err();
@@ -388,8 +388,7 @@ async fn test_load_component_https_404() -> Result<()> {
         error
             .to_string()
             .contains("Failed to download component from URL"),
-        "Wrong error message found, got: {}",
-        error
+        "Wrong error message found, got: {error}"
     );
 
     Ok(())
@@ -552,7 +551,7 @@ async fn test_http_transport() -> Result<()> {
     // We need to modify the source to support configurable bind address
     // For now, let's test with the default port but check if it's available
     let default_port = 9001u16;
-    let test_port = if TcpListener::bind(format!("127.0.0.1:{}", default_port))
+    let test_port = if TcpListener::bind(format!("127.0.0.1:{default_port}"))
         .await
         .is_ok()
     {
@@ -587,7 +586,7 @@ async fn test_http_transport() -> Result<()> {
 
     // Create HTTP client
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{}", test_port);
+    let base_url = format!("http://127.0.0.1:{test_port}");
 
     // Test that the server is responding
     let response = tokio::time::timeout(Duration::from_secs(10), client.get(&base_url).send())

@@ -51,7 +51,7 @@ pub async fn handle_tools_call(
     match result {
         Ok(result) => Ok(serde_json::to_value(result)?),
         Err(e) => {
-            let error_text = format!("Error: {}", e);
+            let error_text = format!("Error: {e}");
             let contents = vec![Content::text(error_text)];
 
             let error_result = CallToolResult {
