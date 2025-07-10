@@ -126,6 +126,4 @@ See the `examples/` directory for more components you can build and load dynamic
 
 ## Contributing
 
-We welcome contributions to Weld! Please check through our issue queue for any open issues and comment if you'd like to work on one. If you have an idea for a new feature or improvement, please open an issue to discuss it first as things are moving quickly and we may already be working on it or have something in flight!
-
-Any code should be pushed to a fork of this repository and a pull request opened against the `main` branch. Maintainers will then review your code as soon as possible and provide feedback. We will try to be responsive, but please be patient as we are a small team and may not be able to respond immediately
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for more information on how to contribute to this project.
