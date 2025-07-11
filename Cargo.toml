@@ -84,4 +84,4 @@ rand = "0.9"
 bytes = "1"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
-rcgen = "0.13"
+rcgen = "0.14"
