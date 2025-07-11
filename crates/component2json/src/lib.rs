@@ -77,7 +77,7 @@ pub fn json_to_vals(value: &Value, types: &[(String, Type)]) -> Result<Vec<Val>,
             let mut results = Vec::new();
             for (name, ty) in types {
                 let value = obj.get(name).ok_or_else(|| {
-                    ValError::ShapeError("object", format!("missing field {}", name))
+                    ValError::ShapeError("object", format!("missing field {name}"))
                 })?;
                 results.push(json_to_val(value, ty)?);
             }
@@ -85,7 +85,7 @@ pub fn json_to_vals(value: &Value, types: &[(String, Type)]) -> Result<Vec<Val>,
         }
         _ => Err(ValError::ShapeError(
             "object",
-            format!("expected object, got {:?}", value),
+            format!("expected object, got {value:?}"),
         )),
     }
 }
@@ -303,7 +303,7 @@ fn gather_exported_functions(
     match item {
         ComponentItem::ComponentFunc(func) => {
             let name = if let Some(prefix) = previous_name {
-                format!("{}.{}", prefix, export_name)
+                format!("{prefix}.{export_name}")
             } else {
                 export_name.to_string()
             };
@@ -409,7 +409,7 @@ fn val_to_json(val: &Val) -> Value {
         }
 
         Val::Flags(flags) => Value::Array(flags.iter().map(|f| Value::String(f.clone())).collect()),
-        Val::Resource(res) => Value::String(format!("resource: {:?}", res)),
+        Val::Resource(res) => Value::String(format!("resource: {res:?}")),
     }
 }
 
@@ -581,7 +581,7 @@ fn json_to_val(value: &Value, ty: &Type) -> Result<Val, ValError> {
                 } else {
                     Err(ValError::ShapeError(
                         "enum",
-                        format!("invalid enum value: {}", s),
+                        format!("invalid enum value: {s}"),
                     ))
                 }
             }
@@ -1474,7 +1474,7 @@ mod tests {
         let get_exported_type = |name: &str| match types_instance.get_export(&engine, name).unwrap()
         {
             wasmtime::component::types::ComponentItem::Type(ty) => ty,
-            _ => panic!("Expected a type export for '{}'", name),
+            _ => panic!("Expected a type export for '{name}'"),
         };
 
         let record_type = get_exported_type("r");

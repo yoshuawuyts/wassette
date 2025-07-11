@@ -65,7 +65,7 @@ fn get_component_dir() -> PathBuf {
     } else {
         let xdg_data_home = env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
             let home = env::var("HOME").unwrap_or_else(|_| "/".to_string());
-            format!("{}/.local/share", home)
+            format!("{home}/.local/share")
         });
         PathBuf::from(xdg_data_home)
             .join("weld-mcp-server")
@@ -113,7 +113,7 @@ impl ServerHandler for McpServer {
             let result = handle_tools_call(params, &self.lifecycle_manager, peer_clone).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
-                    ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
+                    ErrorData::parse_error(format!("Failed to parse result: {e}"), None)
                 }),
                 Err(err) => Err(ErrorData::parse_error(err.to_string(), None)),
             }
@@ -129,7 +129,7 @@ impl ServerHandler for McpServer {
             let result = handle_tools_list(&self.lifecycle_manager).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
-                    ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
+                    ErrorData::parse_error(format!("Failed to parse result: {e}"), None)
                 }),
                 Err(err) => Err(ErrorData::parse_error(err.to_string(), None)),
             }
@@ -145,7 +145,7 @@ impl ServerHandler for McpServer {
             let result = handle_prompts_list(serde_json::Value::Null).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
-                    ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
+                    ErrorData::parse_error(format!("Failed to parse result: {e}"), None)
                 }),
                 Err(err) => Err(ErrorData::parse_error(err.to_string(), None)),
             }
@@ -161,7 +161,7 @@ impl ServerHandler for McpServer {
             let result = handle_resources_list(serde_json::Value::Null).await;
             match result {
                 Ok(value) => serde_json::from_value(value).map_err(|e| {
-                    ErrorData::parse_error(format!("Failed to parse result: {}", e), None)
+                    ErrorData::parse_error(format!("Failed to parse result: {e}"), None)
                 }),
                 Err(err) => Err(ErrorData::parse_error(err.to_string(), None)),
             }

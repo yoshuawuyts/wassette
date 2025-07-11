@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
             let input_schema = t["inputSchema"].clone(); // already a serde_json::Value
             let output_schema = t["outputSchema"].clone(); // already a serde_json::Value
 
-            println!("{}, {:?}", name, description);
+            println!("{name}, {description:?}");
             println!(
                 "input schema: {}",
                 serde_json::to_string_pretty(&input_schema)?
