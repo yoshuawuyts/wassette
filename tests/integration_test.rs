@@ -202,7 +202,7 @@ async fn start_https_server(
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
     let cert_der = cert.cert.der().clone();
-    let key_bytes = cert.key_pair.serialize_der();
+    let key_bytes = cert.signing_key.serialize_der();
     let key_der = PrivateKeyDer::try_from(key_bytes)
         .map_err(|e| anyhow::anyhow!("Failed to convert private key: {}", e))?;
 
