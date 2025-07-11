@@ -247,8 +247,9 @@ fn parse_tool_schema(tool_json: &Value) -> Option<Tool> {
 
     Some(Tool {
         name: Cow::Owned(name.to_string()),
-        description: Cow::Owned(description.to_string()),
+        description: Some(Cow::Owned(description.to_string())),
         input_schema: Arc::new(serde_json::from_value(input_schema).unwrap_or_default()),
+        annotations: None,
     })
 }
 
@@ -272,7 +273,7 @@ mod tests {
         let tool = parse_tool_schema(&tool_json).unwrap();
 
         assert_eq!(tool.name, "test-tool");
-        assert_eq!(tool.description, "Test tool description");
+        assert_eq!(tool.description, Some("Test tool description".into()));
 
         let schema_json = serde_json::to_value(&*tool.input_schema).unwrap();
         let expected = json!({

@@ -11,7 +11,7 @@ use mcp_server::{
 };
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, ErrorData, ListPromptsResult, ListResourcesResult,
-    ListToolsResult, PaginatedRequestParamInner, ServerCapabilities, ServerInfo, ToolsCapability,
+    ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo, ToolsCapability,
 };
 use rmcp::service::{serve_server, RequestContext, RoleServer};
 use rmcp::transport::{stdio as stdio_transport, SseServer};
@@ -122,7 +122,7 @@ impl ServerHandler for McpServer {
 
     fn list_tools<'a>(
         &'a self,
-        _params: Option<PaginatedRequestParamInner>,
+        _params: Option<PaginatedRequestParam>,
         _ctx: RequestContext<RoleServer>,
     ) -> Pin<Box<dyn Future<Output = Result<ListToolsResult, ErrorData>> + Send + 'a>> {
         Box::pin(async move {
@@ -138,7 +138,7 @@ impl ServerHandler for McpServer {
 
     fn list_prompts<'a>(
         &'a self,
-        _params: Option<PaginatedRequestParamInner>,
+        _params: Option<PaginatedRequestParam>,
         _ctx: RequestContext<RoleServer>,
     ) -> Pin<Box<dyn Future<Output = Result<ListPromptsResult, ErrorData>> + Send + 'a>> {
         Box::pin(async move {
@@ -154,7 +154,7 @@ impl ServerHandler for McpServer {
 
     fn list_resources<'a>(
         &'a self,
-        _params: Option<PaginatedRequestParamInner>,
+        _params: Option<PaginatedRequestParam>,
         _ctx: RequestContext<RoleServer>,
     ) -> Pin<Box<dyn Future<Output = Result<ListResourcesResult, ErrorData>> + Send + 'a>> {
         Box::pin(async move {
@@ -166,15 +166,6 @@ impl ServerHandler for McpServer {
                 Err(err) => Err(ErrorData::parse_error(err.to_string(), None)),
             }
         })
-    }
-
-    fn get_peer(&self) -> Option<rmcp::service::Peer<RoleServer>> {
-        self.peer.clone()
-    }
-
-    fn set_peer(&mut self, peer: rmcp::service::Peer<RoleServer>) {
-        self.peer = Some(peer);
-        tracing::debug!("Peer connection stored for notifications");
     }
 }
 

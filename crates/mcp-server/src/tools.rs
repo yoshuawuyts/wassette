@@ -70,9 +70,9 @@ fn get_builtin_tools() -> Vec<Tool> {
     vec![
         Tool {
             name: Cow::Borrowed("load-component"),
-            description: Cow::Borrowed(
+            description: Some(Cow::Borrowed(
                 "Dynamically loads a new tool or component from either the filesystem or OCI registries.",
-            ),
+            )),
             input_schema: Arc::new(
                 serde_json::from_value(json!({
                     "type": "object",
@@ -83,12 +83,13 @@ fn get_builtin_tools() -> Vec<Tool> {
                 }))
                 .unwrap_or_default(),
             ),
+            annotations: None,
         },
         Tool {
             name: Cow::Borrowed("unload-component"),
-            description: Cow::Borrowed(
+            description: Some(Cow::Borrowed(
                 "Unloads a tool or component.",
-            ),
+            )),
             input_schema: Arc::new(
                 serde_json::from_value(json!({
                     "type": "object",
@@ -99,12 +100,13 @@ fn get_builtin_tools() -> Vec<Tool> {
                 }))
                 .unwrap_or_default(),
             ),
+            annotations: None,
         },
         Tool {
             name: Cow::Borrowed("list-components"),
-            description: Cow::Borrowed(
+            description: Some(Cow::Borrowed(
                 "Lists all currently loaded components or tools.",
-            ),
+            )),
             input_schema: Arc::new(
                 serde_json::from_value(json!({
                     "type": "object",
@@ -113,6 +115,7 @@ fn get_builtin_tools() -> Vec<Tool> {
                 }))
                 .unwrap_or_default(),
             ),
+            annotations: None,
         },
     ]
 }

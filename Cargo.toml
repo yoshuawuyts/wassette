@@ -23,7 +23,7 @@ oci-client = "0.15"
 oci-wasm = "0.3"
 policy-mcp = { git = "https://github.com/semcp/policy-mcp-rs", branch = "main" }
 reqwest = "0.12"
-rmcp = "0.1.5"
+rmcp = "0.2"
 serde = "1.0"
 serde_json = "1.0"
 tempfile = "3.8"
