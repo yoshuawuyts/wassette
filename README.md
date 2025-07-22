@@ -128,6 +128,11 @@ See the `examples/` directory for more components you can build and load dynamic
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for more information on how to contribute to this project.
 
+## License
+
+<sup>
+Licensed under the <a href="LICENSE">MIT License</a>.
+</sup>
 
 ## Trademarks
 
