@@ -1,10 +1,12 @@
-# weld-mcp-server
+# wassette
 
-Weld is a secure and open source MCP server that runs on top of WebAssembly (Wasm). It is designed to securely execute untrusted tools by embedding a Wasm runtime and applying capability-based policies to control access to system resources. It uses the sandboxing and abstraction provided by the Wasm [Component Model](https://github.com/WebAssembly/component-model) to ensure tools can be executed safely and easily without compromising the host system.
+Wassette is a secure and open source MCP server that runs on top of WebAssembly (Wasm). It is designed to securely execute untrusted tools by embedding a Wasm runtime and applying capability-based policies to control access to system resources. It uses the sandboxing and abstraction provided by the Wasm [Component Model](https://github.com/WebAssembly/component-model) to ensure tools can be executed safely and easily without compromising the host system.
 
 Please read the rest of the README for more background, but the TL;DR is this:
 
-`weld` essentially acts as a _virtual MCP server_, with built-in observability, resource quotas, and handles infrastructure complexity automatically.
+`wassette` essentially acts as a _virtual MCP server_, with built-in observability, resource quotas, and handles infrastructure complexity automatically.
+
+> Note: The name "Wassette" is a play on the word "Wasm" and "Cassette" - a magnetic tape used to store audio,  and is pronounced "Wass-ette".
 
 ## 🚩 Purpose
 
@@ -35,7 +37,7 @@ We wanted to build an entirely open source tool that enables developers to defin
 So what is this project aiming to be?
 
 1. One centralized open-source mcp-server, written in a memory safe, high performance language that embeds a WebAssembly runtime (e.g. [Wasmtime](https://github.com/bytecodealliance/wasmtime) or [hyperlight-wasm](https://github.com/hyperlight-dev/hyperlight-wasm)), acting as a minimal trusted computing base (TCB).
-2. `weld` will implement allow/deny lists for file paths, network endpoints, and system calls using capability-based policy like [policy-mcp-rs](https://github.com/microsoft/policy-mcp-rs).
+2. `wassette` will implement allow/deny lists for file paths, network endpoints, and system calls using capability-based policy like [policy-mcp-rs](https://github.com/microsoft/policy-mcp-rs).
 3. Untrusted tool code will be distributed as WebAssembly OCI artifacts in OCI registries, and be loaded into the trusted layer upon signature verification. Each tool will have a discrete set of capabilities. For example, tool A needs to read `./data`; not network; tool B needs read/write to `/assets` and outbound HTTP only to `api.company.com:443`.
 
 ### What about the developer experience?
@@ -49,10 +51,10 @@ If you are interested in learning more about what programming language supports 
 ### All Platforms (Shell Script)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/microsoft/weld-mcp-server/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/microsoft/wassette/main/install.sh | bash
 ```
 
-This will detect your platform and install the latest `weld-mcp-server` binary to your `$PATH`.
+This will detect your platform and install the latest `wassette` binary to your `$PATH`.
 
 ## Integrate with MCP Clients
 
@@ -63,7 +65,7 @@ Add this to your VSCode or Cursor settings:
 ```json
 "mcp": {
   "servers": {
-    "weld": {
+    "wassette": {
       "type": "sse",
       "url": "http://127.0.0.1:9001/sse"
     }
@@ -73,17 +75,17 @@ Add this to your VSCode or Cursor settings:
 
 ## Quick Start
 
-1. **Start the weld server:**
+1. **Start the wassette server:**
 
    ```bash
-   # Run the following cmd in your terminal to start the Weld MCP server
-   weld-mcp-server serve --http --policy-file policy.yaml
+   # Run the following cmd in your terminal to start the Wassette MCP server
+   wassette serve --http --policy-file policy.yaml
    ```
 
 2. **Dynamically load tools:**
 
    **From OCI Registry:**
-   <!-- update to point to weld pkgs -->
+   <!-- update to point to wassette pkgs -->
 
    ```
    # Enter the following prompt into your AI client
@@ -104,7 +106,7 @@ Add this to your VSCode or Cursor settings:
    Use the read-file tool to get the contents of the Justfile at the root of this repo
    ```
 
-   The tools are now available in your AI client's tool list - no restart required! Weld automatically detects what functions each component exports and makes them available as MCP tools.
+   The tools are now available in your AI client's tool list - no restart required! Wassette automatically detects what functions each component exports and makes them available as MCP tools.
 
 **Built-in Tools for Dynamic Loading:**
 
