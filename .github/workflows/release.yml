@@ -29,25 +29,25 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             name: wassette
             arch: linux_arm64
-            runner: ubuntu-24.04-arm
-          # macOS targets
-          - target: x86_64-apple-darwin
-            name: wassette
-            arch: darwin_amd64
-            runner: macos-13
-          - target: aarch64-apple-darwin
-            name: wassette
-            arch: darwin_arm64
-            runner: macos-latest
-          # Windows targets
-          - target: x86_64-pc-windows-msvc
-            name: wassette.exe
-            arch: windows_amd64
-            runner: windows-latest
-          - target: aarch64-pc-windows-msvc
-            name: wassette.exe
-            arch: windows_arm64
-            runner: windows-11-arm
+            runner: ubuntu-latest-arm
+          # # macOS targets
+          # - target: x86_64-apple-darwin
+          #   name: wassette
+          #   arch: darwin_amd64
+          #   runner: macos-13
+          # - target: aarch64-apple-darwin
+          #   name: wassette
+          #   arch: darwin_arm64
+          #   runner: macos-latest
+          # # Windows targets
+          # - target: x86_64-pc-windows-msvc
+          #   name: wassette.exe
+          #   arch: windows_amd64
+          #   runner: windows-latest
+          # - target: aarch64-pc-windows-msvc
+          #   name: wassette.exe
+          #   arch: windows_arm64
+          #   runner: windows-11-arm
 
     steps:
       - name: Checkout repository
