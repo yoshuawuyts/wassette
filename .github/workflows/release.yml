@@ -64,15 +64,15 @@ jobs:
       - name: Prepare binary (Unix)
         if: "!contains(matrix.target, 'windows')"
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czvf ../../../${{ matrix.name }}.tar.gz wassette
+          cd target/release
+          tar czvf ../../${{ matrix.name }}.tar.gz wassette
           cd -
 
       - name: Prepare binary (Windows)
         if: contains(matrix.target, 'windows')
         run: |
-          cd target/${{ matrix.target }}/release
-          7z a ../../../${{ matrix.name }}.zip wassette.exe
+          cd target/release
+          7z a ../../${{ matrix.name }}.zip wassette.exe
           cd -
         shell: bash
 
