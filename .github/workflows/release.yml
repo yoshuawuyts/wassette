@@ -28,7 +28,7 @@ jobs:
             runner: ubuntu-latest
           # Temporarily disabled - aarch64 runners not available for private repos
           # - target: aarch64-unknown-linux-gnu
-          #   name: wassette-linux-arm
+          #   name: wassette-linux-arm64
           #   runner: ubuntu-24.04-arm
           # macOS targets
           - target: x86_64-apple-darwin
