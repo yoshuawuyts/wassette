@@ -30,15 +30,15 @@ component2json path="examples/fetch-rs/target/wasm32-wasip2/release/fetch_rs.was
     cargo run --bin component2json -p component2json -- {{ path }}
 
 run RUST_LOG='info':
-    RUST_LOG={{RUST_LOG}} cargo run --bin wassette serve --http --policy-file policy.yaml
+    RUST_LOG={{RUST_LOG}} cargo run --bin wassette serve --http
 
 run-filesystem RUST_LOG='info':
-    RUST_LOG={{RUST_LOG}} cargo run --bin wassette serve --http --plugin-dir ./examples/filesystem-rs --policy-file ./examples/filesystem-rs/policy.yaml
+    RUST_LOG={{RUST_LOG}} cargo run --bin wassette serve --http --plugin-dir ./examples/filesystem-rs
 
 # Requires an openweather API key in the environment variable OPENWEATHER_API_KEY
 run-get-weather RUST_LOG='info':
-    RUST_LOG={{RUST_LOG}} cargo run --bin wassette serve --http --plugin-dir ./examples/get-weather-js --policy-file ./examples/get-weather-js/policy.yaml
+    RUST_LOG={{RUST_LOG}} cargo run --bin wassette serve --http --plugin-dir ./examples/get-weather-js
 
 run-fetch-rs RUST_LOG='info':
-    RUST_LOG={{RUST_LOG}} cargo run --bin wassette serve --http --plugin-dir ./examples/fetch-rs --policy-file ./examples/fetch-rs/policy.yaml
+    RUST_LOG={{RUST_LOG}} cargo run --bin wassette serve --http --plugin-dir ./examples/fetch-rs
 
