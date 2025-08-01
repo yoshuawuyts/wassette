@@ -14,7 +14,7 @@ use rmcp::model::{
     ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo, ToolsCapability,
 };
 use rmcp::service::{serve_server, RequestContext, RoleServer};
-use rmcp::transport::{stdio as stdio_transport, SseServer};
+use rmcp::transport::{stdio as stdio_transport, streamable_http_server::{StreamableHttpService, session::local::LocalSessionManager}};
 use rmcp::ServerHandler;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
@@ -224,12 +224,20 @@ async fn main() -> Result<()> {
                         "Starting MCP server on {} with HTTP transport",
                         BIND_ADDRESS
                     );
-                    let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
-                        .await?
-                        .with_service(move || server.clone());
+                    
+                    let service = StreamableHttpService::new(
+                        move || Ok(server.clone()),
+                        LocalSessionManager::default().into(),
+                        Default::default(),
+                    );
 
-                    tokio::signal::ctrl_c().await?;
-                    ct.cancel();
+                    let router = axum::Router::new().nest_service("/mcp", service);
+                    let tcp_listener = tokio::net::TcpListener::bind(BIND_ADDRESS).await?;
+                    
+                    let server_handle = axum::serve(tcp_listener, router)
+                        .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.unwrap() });
+                    
+                    server_handle.await?;
                 }
                 (true, true) => {
                     return Err(anyhow::anyhow!(

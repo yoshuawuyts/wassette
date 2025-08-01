@@ -66,8 +66,8 @@ Add this to your VSCode or Cursor settings:
 "mcp": {
   "servers": {
     "wassette": {
-      "type": "sse",
-      "url": "http://127.0.0.1:9001/sse"
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:9001/mcp"
     }
   }
 }
