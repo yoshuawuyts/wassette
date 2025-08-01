@@ -15,7 +15,7 @@ use tokio::fs::DirEntry;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument};
-use wasmtime::component::{Component, Linker};
+use wasmtime::component::{Component, InstancePre, Linker};
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::p2::WasiCtxBuilder;
 use wasmtime_wasi_config::{WasiConfig, WasiConfigVariables};
@@ -178,6 +178,10 @@ pub struct LifecycleManager {
     http_client: reqwest::Client,
     plugin_dir: PathBuf,
     wasi_state_template: Arc<WasiStateTemplate>,
+    /// Cached linker that is configured once and reused for all component instantiations
+    cached_linker: Arc<Linker<WasiState>>,
+    /// Cache of preinstantiated components for fast instantiation
+    preinstantiated_components: Arc<RwLock<HashMap<String, InstancePre<WasiState>>>>,
 }
 
 impl LifecycleManager {
@@ -245,6 +249,9 @@ impl LifecycleManager {
     ) -> Result<Self> {
         info!("Creating new LifecycleManager");
 
+        // Create and configure the linker once for reuse
+        let cached_linker = Arc::new(Self::create_configured_linker(&engine)?);
+
         let mut registry = ComponentRegistry::new();
         let mut components = HashMap::new();
 
@@ -284,7 +291,20 @@ impl LifecycleManager {
             http_client,
             plugin_dir: plugin_dir.as_ref().to_path_buf(),
             wasi_state_template: Arc::new(wasi_state_template),
+            cached_linker,
+            preinstantiated_components: Arc::new(RwLock::new(HashMap::new())),
         })
+    }
+
+    /// Creates and configures a linker with all the necessary WASI modules
+    fn create_configured_linker(engine: &Engine) -> Result<Linker<WasiState>> {
+        let mut linker = Linker::new(engine);
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
+        wasmtime_wasi_config::add_to_linker(&mut linker, |h: &mut WasiState| {
+            WasiConfig::from(&h.wasi_config_vars)
+        })?;
+        Ok(linker)
     }
 
     /// Loads a new component from the given URI. This URI can be a file path, an OCI reference, or a URL.
@@ -350,13 +370,20 @@ impl LifecycleManager {
             );
         }
 
-        let res = self
-            .components
-            .write()
-            .await
-            .insert(id.clone(), Arc::new(component))
-            .map(|_| LoadResult::Replaced)
-            .unwrap_or(LoadResult::New);
+        let res = {
+            let mut components_guard = self.components.write().await;
+            let res = components_guard
+                .insert(id.clone(), Arc::new(component))
+                .map(|_| LoadResult::Replaced)
+                .unwrap_or(LoadResult::New);
+            
+            // If we're replacing a component, clear its preinstantiated cache
+            if matches!(res, LoadResult::Replaced) {
+                self.preinstantiated_components.write().await.remove(&id);
+            }
+            
+            res
+        };
 
         info!("Successfully loaded component");
         Ok((id, res))
@@ -434,6 +461,8 @@ impl LifecycleManager {
         debug!("Unloading component");
         self.components.write().await.remove(id);
         self.registry.write().await.unregister_component(id);
+        // Also clear the preinstantiated component cache
+        self.preinstantiated_components.write().await.remove(id);
     }
 
     /// Uninstalls the component from the system. This removes the component from the runtime and
@@ -516,17 +545,29 @@ impl LifecycleManager {
         function_name: &str,
         parameters: &str,
     ) -> Result<String> {
-        let mut linker = Linker::new(self.engine.as_ref());
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
-        wasmtime_wasi_config::add_to_linker(&mut linker, |h: &mut WasiState| {
-            WasiConfig::from(&h.wasi_config_vars)
-        })?;
+        // Get component ID for caching purposes
+        let component_id = self.get_component_id_for_component(component).await?;
 
+        // Get or create the preinstantiated component
+        let instance_pre = {
+            let mut cache = self.preinstantiated_components.write().await;
+            match cache.get(&component_id) {
+                Some(instance_pre) => instance_pre.clone(),
+                None => {
+                    // Create preinstantiated component and cache it
+                    let instance_pre = self.cached_linker.instantiate_pre(component)?;
+                    cache.insert(component_id.clone(), instance_pre.clone());
+                    instance_pre
+                }
+            }
+        };
+
+        // Create a new state and store for this call
         let state = self.wasi_state_template.build()?;
         let mut store = Store::new(self.engine.as_ref(), state);
 
-        let instance = linker.instantiate_async(&mut store, component).await?;
+        // Instantiate using the cached preinstantiated component
+        let instance = instance_pre.instantiate_async(&mut store).await?;
 
         // NOTE(Joe): To support functions that are exported from an interface, we need to split the
         // function name into an interface name and a function name; e.g. "<ns>:<package>/<interface>.<function>"
@@ -582,6 +623,22 @@ impl LifecycleManager {
         } else {
             Ok(serde_json::to_string(&result_json)?)
         }
+    }
+
+    /// Helper method to get component ID from a Component reference
+    async fn get_component_id_for_component(&self, component: &Component) -> Result<String> {
+        let components = self.components.read().await;
+        for (id, cached_component) in components.iter() {
+            // Compare component pointers - this is a simple approach
+            // In a more sophisticated implementation, we might hash the component bytecode
+            if Arc::ptr_eq(cached_component, &Arc::new(component.clone())) {
+                return Ok(id.clone());
+            }
+        }
+        
+        // If not found in cache, generate a temporary ID based on the component
+        // This handles the case where a component is passed directly without being in the cache
+        Ok(format!("temp_component_{:p}", component))
     }
 }
 
@@ -951,6 +1008,43 @@ mod tests {
         let component_id = manager.get_component_id_for_tool("fetch").await?;
         assert_eq!(component_id, TEST_COMPONENT_ID);
 
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_cached_linker_infrastructure() -> Result<()> {
+        let manager = create_test_manager().await?;
+        
+        // Initially, the preinstantiated cache should be empty
+        assert_eq!(manager.preinstantiated_components.read().await.len(), 0);
+        
+        // Verify cached linker exists and is properly configured
+        // We can't easily test the internal state, but we can verify it doesn't panic
+        let _engine_ref = manager.cached_linker.engine();
+        
+        // Test manual cache operations
+        let test_id = "test_component_id";
+        assert!(!manager.preinstantiated_components.read().await.contains_key(test_id));
+        
+        // Test that unloading a non-existent component doesn't panic
+        manager.unload_component(test_id).await;
+        assert_eq!(manager.preinstantiated_components.read().await.len(), 0);
+        
+        Ok(())
+    }
+
+    #[test(tokio::test)] 
+    async fn test_linker_configuration() -> Result<()> {
+        let manager = create_test_manager().await?;
+        
+        // Verify that the linker was created successfully and is accessible
+        let linker = &manager.cached_linker;
+        
+        // The linker should be properly configured - we can't compare engine pointers
+        // since the linker likely has its own engine reference, but we can verify
+        // that accessing the engine doesn't panic
+        let _engine = linker.engine();
+        
         Ok(())
     }
 }
