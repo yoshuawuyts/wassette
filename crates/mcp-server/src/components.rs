@@ -101,30 +101,48 @@ pub(crate) async fn handle_unload_component(
         .ok_or_else(|| anyhow::anyhow!("Missing 'id' in arguments"))?;
 
     info!("Unloading component {}", id);
-    lifecycle_manager.unload_component(id).await;
 
-    let status_text = serde_json::to_string(&json!({
-        "status": "component unloaded",
-        "id": id
-    }))?;
+    match lifecycle_manager.unload_component(id).await {
+        Ok(()) => {
+            let status_text = serde_json::to_string(&json!({
+                "status": "component unloaded successfully",
+                "id": id
+            }))?;
 
-    let contents = vec![Content::text(status_text)];
+            let contents = vec![Content::text(status_text)];
 
-    if let Some(peer) = server_peer {
-        if let Err(e) = peer.notify_tool_list_changed().await {
-            error!("Failed to send tool list change notification: {}", e);
-        } else {
-            info!(
-                "Sent tool list changed notification after unloading component {}",
-                id
-            );
+            if let Some(peer) = server_peer {
+                if let Err(e) = peer.notify_tool_list_changed().await {
+                    error!("Failed to send tool list change notification: {}", e);
+                } else {
+                    info!(
+                        "Sent tool list changed notification after unloading component {}",
+                        id
+                    );
+                }
+            }
+
+            Ok(CallToolResult {
+                content: contents,
+                is_error: None,
+            })
+        }
+        Err(e) => {
+            error!("Failed to unload component {}: {}", id, e);
+            let error_text = serde_json::to_string(&json!({
+                "status": "error",
+                "message": format!("Failed to unload component: {}", e),
+                "id": id
+            }))?;
+
+            let contents = vec![Content::text(error_text)];
+
+            Ok(CallToolResult {
+                content: contents,
+                is_error: Some(true),
+            })
         }
     }
-
-    Ok(CallToolResult {
-        content: contents,
-        is_error: None,
-    })
 }
 
 #[instrument(skip(lifecycle_manager))]

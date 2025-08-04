@@ -659,29 +659,99 @@ impl LifecycleManager {
         Ok((id, res))
     }
 
-    /// Unloads the component with the specified id. This does not remove the installed component,
-    /// only unloads it from the runtime. Use [`LifecycleManager::uninstall_component`] to remove
-    /// the component from the system.
+    /// Unloads the component with the specified id. This removes the component from the runtime
+    /// and removes all associated files from disk, making it the reverse operation of load_component.
+    /// This function fails if any files cannot be removed (except when they don't exist).
     #[instrument(skip(self))]
-    pub async fn unload_component(&self, id: &str) {
-        debug!("Unloading component");
+    pub async fn unload_component(&self, id: &str) -> Result<()> {
+        debug!("Unloading component and removing files from disk");
+
         self.components.write().await.remove(id);
         self.registry.write().await.unregister_component(id);
-    }
 
-    /// Uninstalls the component from the system. This removes the component from the runtime and
-    /// removes the component from disk.
-    #[instrument(skip(self))]
-    pub async fn uninstall_component(&self, id: &str) -> Result<()> {
-        debug!("Uninstalling component");
-        self.unload_component(id).await;
-        let component_file = self.component_path(id);
-        tokio::fs::remove_file(&component_file)
+        self.policy_registry
+            .write()
             .await
-            .context(format!(
-                "Failed to remove component file at {}. Please remove the file manually.",
-                component_file.display()
-            ))
+            .component_policies
+            .remove(id);
+
+        let component_file = self.component_path(id);
+        match tokio::fs::remove_file(&component_file).await {
+            Ok(()) => {
+                debug!(
+                    component_id = %id,
+                    path = %component_file.display(),
+                    "Removed component file"
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!(
+                    component_id = %id,
+                    path = %component_file.display(),
+                    "Component file already absent"
+                );
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to remove component file at {}: {}",
+                    component_file.display(),
+                    e
+                ));
+            }
+        }
+
+        let policy_path = self.get_component_policy_path(id);
+        match tokio::fs::remove_file(&policy_path).await {
+            Ok(()) => {
+                debug!(
+                    component_id = %id,
+                    path = %policy_path.display(),
+                    "Removed policy file"
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!(
+                    component_id = %id,
+                    path = %policy_path.display(),
+                    "Policy file already absent"
+                );
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to remove policy file at {}: {}",
+                    policy_path.display(),
+                    e
+                ));
+            }
+        }
+
+        let metadata_path = self.plugin_dir.join(format!("{id}.policy.meta.json"));
+        match tokio::fs::remove_file(&metadata_path).await {
+            Ok(()) => {
+                debug!(
+                    component_id = %id,
+                    path = %metadata_path.display(),
+                    "Removed policy metadata file"
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!(
+                    component_id = %id,
+                    path = %metadata_path.display(),
+                    "Policy metadata file already absent"
+                );
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to remove policy metadata file at {}: {}",
+                    metadata_path.display(),
+                    e
+                ));
+            }
+        }
+
+        info!(component_id = %id, "Component unloaded successfully");
+        Ok(())
     }
 
     /// Returns the component ID for a given tool name.
@@ -1380,7 +1450,7 @@ mod tests {
         let loaded_components = manager.list_components().await;
         assert_eq!(loaded_components.len(), 1);
 
-        manager.unload_component(TEST_COMPONENT_ID).await;
+        manager.unload_component(TEST_COMPONENT_ID).await?;
 
         let loaded_components = manager.list_components().await;
         assert!(loaded_components.is_empty());

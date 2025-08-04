@@ -11,7 +11,7 @@ use common::build_fetch_component;
 async fn cleanup_components(manager: &LifecycleManager) -> Result<()> {
     let component_ids = manager.list_components().await;
     for id in component_ids {
-        manager.unload_component(&id).await;
+        manager.unload_component(&id).await?;
     }
     Ok(())
 }
