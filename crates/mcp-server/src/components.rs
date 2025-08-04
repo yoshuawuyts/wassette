@@ -39,7 +39,7 @@ pub(crate) async fn get_component_tools(lifecycle_manager: &LifecycleManager) ->
 pub(crate) async fn handle_load_component(
     req: &CallToolRequestParam,
     lifecycle_manager: &LifecycleManager,
-    server_peer: Option<Peer<RoleServer>>,
+    server_peer: Peer<RoleServer>,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
     let path = args
@@ -60,15 +60,18 @@ pub(crate) async fn handle_load_component(
 
             let contents = vec![Content::text(status_text)];
 
-            if let Some(peer) = server_peer {
-                if let Err(e) = peer.notify_tool_list_changed().await {
-                    error!("Failed to send tool list change notification: {}", e);
-                } else {
-                    info!(
-                        "Sent tool list changed notification after loading component {}",
-                        id
-                    );
-                }
+            info!(
+                "Notifying server peer about tool list change after loading component {}",
+                id
+            );
+            // Notify the server peer about the tool list change
+            if let Err(e) = server_peer.notify_tool_list_changed().await {
+                error!("Failed to send tool list change notification: {}", e);
+            } else {
+                info!(
+                    "Sent tool list changed notification after loading component {}",
+                    id
+                );
             }
 
             Ok(CallToolResult {
@@ -91,7 +94,7 @@ pub(crate) async fn handle_load_component(
 pub(crate) async fn handle_unload_component(
     req: &CallToolRequestParam,
     lifecycle_manager: &LifecycleManager,
-    server_peer: Option<Peer<RoleServer>>,
+    server_peer: Peer<RoleServer>,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
 
@@ -110,15 +113,13 @@ pub(crate) async fn handle_unload_component(
 
     let contents = vec![Content::text(status_text)];
 
-    if let Some(peer) = server_peer {
-        if let Err(e) = peer.notify_tool_list_changed().await {
-            error!("Failed to send tool list change notification: {}", e);
-        } else {
-            info!(
-                "Sent tool list changed notification after unloading component {}",
-                id
-            );
-        }
+    if let Err(e) = server_peer.notify_tool_list_changed().await {
+        error!("Failed to send tool list change notification: {}", e);
+    } else {
+        info!(
+            "Sent tool list changed notification after unloading component {}",
+            id
+        );
     }
 
     Ok(CallToolResult {
