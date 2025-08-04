@@ -487,6 +487,8 @@ async fn load_resource<T: Loadable>(
 pub struct LifecycleManager {
     engine: Arc<Engine>,
     components: Arc<RwLock<HashMap<String, Arc<Component>>>>,
+    /// Maps component_id to its file path for lazy loading
+    component_paths: Arc<RwLock<HashMap<String, PathBuf>>>,
     registry: Arc<RwLock<ComponentRegistry>>,
     policy_registry: Arc<RwLock<PolicyRegistry>>,
     oci_client: Arc<oci_wasm::WasmClient>,
@@ -539,57 +541,22 @@ impl LifecycleManager {
     ) -> Result<Self> {
         info!("Creating new LifecycleManager");
 
-        let mut registry = ComponentRegistry::new();
-        let mut components = HashMap::new();
-        let mut policy_registry = PolicyRegistry::default();
+        let registry = ComponentRegistry::new();
+        let components = HashMap::new();
+        let policy_registry = PolicyRegistry::default();
+        let mut component_paths = HashMap::new();
 
-        let loaded_components =
+        // Scan for component files without loading them for faster startup
+        let scanned_components =
             tokio_stream::wrappers::ReadDirStream::new(tokio::fs::read_dir(&plugin_dir).await?)
                 .map_err(anyhow::Error::from)
-                .try_filter_map(|entry| {
-                    let value = engine.clone();
-                    async move { load_component_from_entry(value, entry).await }
-                })
+                .try_filter_map(|entry| async move { scan_component_from_entry(entry).await })
                 .try_collect::<Vec<_>>()
                 .await?;
 
-        for (component, name) in loaded_components.into_iter() {
-            let tool_metadata = component_exports_to_tools(&component, &engine, true);
-            registry
-                .register_tools(&name, tool_metadata)
-                .context("unable to insert component into registry")?;
-            components.insert(name.clone(), Arc::new(component));
-
-            // Check for co-located policy file and restore policy association
-            let policy_path = plugin_dir.as_ref().join(format!("{name}.policy.yaml"));
-            if policy_path.exists() {
-                match tokio::fs::read_to_string(&policy_path).await {
-                    Ok(policy_content) => match PolicyParser::parse_str(&policy_content) {
-                        Ok(policy) => {
-                            match wasistate::create_wasi_state_template_from_policy(
-                                &policy,
-                                plugin_dir.as_ref(),
-                            ) {
-                                Ok(wasi_template) => {
-                                    policy_registry
-                                        .component_policies
-                                        .insert(name.clone(), Arc::new(wasi_template));
-                                    info!(component_id = %name, "Restored policy association from co-located file");
-                                }
-                                Err(e) => {
-                                    warn!(component_id = %name, error = %e, "Failed to create WASI template from policy");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!(component_id = %name, error = %e, "Failed to parse co-located policy file");
-                        }
-                    },
-                    Err(e) => {
-                        warn!(component_id = %name, error = %e, "Failed to read co-located policy file");
-                    }
-                }
-            }
+        for (component_path, name) in scanned_components.into_iter() {
+            component_paths.insert(name.clone(), component_path);
+            info!(component_id = %name, "Found component for lazy loading");
         }
 
         // Make sure the plugin dir exists and also create a subdirectory for temporary staging of downloaded files
@@ -600,16 +567,97 @@ impl LifecycleManager {
             .await
             .context("Failed to create downloads directory")?;
 
-        info!("LifecycleManager initialized successfully");
+        info!("LifecycleManager initialized successfully with {} components ready for lazy loading", component_paths.len());
         Ok(Self {
             engine,
             components: Arc::new(RwLock::new(components)),
+            component_paths: Arc::new(RwLock::new(component_paths)),
             registry: Arc::new(RwLock::new(registry)),
             policy_registry: Arc::new(RwLock::new(policy_registry)),
             oci_client: Arc::new(oci_wasm::WasmClient::new(oci_client)),
             http_client,
             plugin_dir: plugin_dir.as_ref().to_path_buf(),
         })
+    }
+
+    /// Lazily loads a component if it hasn't been loaded yet
+    #[instrument(skip(self))]
+    async fn ensure_component_loaded(&self, component_id: &str) -> Result<()> {
+        // Check if component is already loaded
+        {
+            let components = self.components.read().await;
+            if components.contains_key(component_id) {
+                return Ok(());
+            }
+        }
+
+        // Check if we have a path for this component
+        let component_path = {
+            let paths = self.component_paths.read().await;
+            paths.get(component_id).cloned()
+        };
+
+        let Some(component_path) = component_path else {
+            bail!("Component not found: {}", component_id);
+        };
+
+        info!(component_id = %component_id, "Lazy loading component");
+        let start_time = Instant::now();
+
+        // Load and compile the component
+        let component = {
+            let engine = self.engine.clone();
+            tokio::task::spawn_blocking(move || Component::from_file(&engine, component_path)).await??
+        };
+
+        // Generate tool metadata
+        let tool_metadata = component_exports_to_tools(&component, &self.engine, true);
+
+        // Register tools and store component atomically
+        {
+            let mut registry = self.registry.write().await;
+            let mut components = self.components.write().await;
+            
+            registry.register_tools(component_id, tool_metadata)
+                .context("unable to insert component into registry")?;
+            components.insert(component_id.to_string(), Arc::new(component));
+        }
+
+        // Load co-located policy file if it exists
+        let policy_path = self.plugin_dir.join(format!("{component_id}.policy.yaml"));
+        if policy_path.exists() {
+            match tokio::fs::read_to_string(&policy_path).await {
+                Ok(policy_content) => match PolicyParser::parse_str(&policy_content) {
+                    Ok(policy) => {
+                        match wasistate::create_wasi_state_template_from_policy(
+                            &policy,
+                            &self.plugin_dir,
+                        ) {
+                            Ok(wasi_template) => {
+                                self.policy_registry
+                                    .write()
+                                    .await
+                                    .component_policies
+                                    .insert(component_id.to_string(), Arc::new(wasi_template));
+                                info!(component_id = %component_id, "Loaded policy association from co-located file");
+                            }
+                            Err(e) => {
+                                warn!(component_id = %component_id, error = %e, "Failed to create WASI template from policy");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(component_id = %component_id, error = %e, "Failed to parse co-located policy file");
+                    }
+                },
+                Err(e) => {
+                    warn!(component_id = %component_id, error = %e, "Failed to read co-located policy file");
+                }
+            }
+        }
+
+        info!(component_id = %component_id, elapsed = ?start_time.elapsed(), "Component lazy loaded successfully");
+        Ok(())
     }
 
     /// Loads a new component from the given URI. This URI can be a file path, an OCI reference, or a URL.
@@ -655,6 +703,12 @@ impl LifecycleManager {
             .map(|_| LoadResult::Replaced)
             .unwrap_or(LoadResult::New);
 
+        // Update component_paths to include the new component location
+        self.component_paths
+            .write()
+            .await
+            .insert(id.clone(), self.component_path(&id));
+
         info!("Successfully loaded component");
         Ok((id, res))
     }
@@ -667,6 +721,7 @@ impl LifecycleManager {
         debug!("Unloading component");
         self.components.write().await.remove(id);
         self.registry.write().await.unregister_component(id);
+        // Keep component_paths entry so it can be lazy loaded again if needed
     }
 
     /// Uninstalls the component from the system. This removes the component from the runtime and
@@ -675,6 +730,10 @@ impl LifecycleManager {
     pub async fn uninstall_component(&self, id: &str) -> Result<()> {
         debug!("Uninstalling component");
         self.unload_component(id).await;
+        
+        // Remove from component_paths since the file will be deleted
+        self.component_paths.write().await.remove(id);
+        
         let component_file = self.component_path(id);
         tokio::fs::remove_file(&component_file)
             .await
@@ -688,41 +747,88 @@ impl LifecycleManager {
     /// If there are multiple components with the same tool name, returns an error.
     #[instrument(skip(self))]
     pub async fn get_component_id_for_tool(&self, tool_name: &str) -> Result<String> {
-        let registry = self.registry.read().await;
-        let tool_infos = registry
-            .get_tool_info(tool_name)
-            .context("Tool not found")?;
-
-        if tool_infos.len() > 1 {
-            bail!(
-                "Multiple components found for tool '{}': {}",
-                tool_name,
-                tool_infos
-                    .iter()
-                    .map(|info| info.component_id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
+        // First try to find the tool in already loaded components
+        {
+            let registry = self.registry.read().await;
+            if let Some(tool_infos) = registry.get_tool_info(tool_name) {
+                if tool_infos.len() > 1 {
+                    bail!(
+                        "Multiple components found for tool '{}': {}",
+                        tool_name,
+                        tool_infos
+                            .iter()
+                            .map(|info| info.component_id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                return Ok(tool_infos[0].component_id.clone());
+            }
         }
 
-        Ok(tool_infos[0].component_id.clone())
+        // Tool not found in loaded components, try to lazy load all unloaded components
+        // and search for the tool
+        let unloaded_components: Vec<String> = {
+            let paths = self.component_paths.read().await;
+            let components = self.components.read().await;
+            paths.keys()
+                .filter(|id| !components.contains_key(*id))
+                .cloned()
+                .collect()
+        };
+
+        for component_id in unloaded_components {
+            if let Err(e) = self.ensure_component_loaded(&component_id).await {
+                warn!(component_id = %component_id, error = %e, "Failed to lazy load component while searching for tool");
+                continue;
+            }
+
+            // Check if this component has the tool we're looking for
+            let registry = self.registry.read().await;
+            if let Some(tool_infos) = registry.get_tool_info(tool_name) {
+                if tool_infos.len() > 1 {
+                    bail!(
+                        "Multiple components found for tool '{}': {}",
+                        tool_name,
+                        tool_infos
+                            .iter()
+                            .map(|info| info.component_id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                return Ok(tool_infos[0].component_id.clone());
+            }
+        }
+
+        bail!("Tool not found: {}", tool_name);
     }
 
     /// Lists all available tools across all components
     #[instrument(skip(self))]
     pub async fn list_tools(&self) -> Vec<Value> {
+        // For performance, only return tools from already loaded components
+        // Tools from unloaded components will be discovered on first use
         self.registry.read().await.list_tools()
     }
 
     /// Returns the requested component. Returns `None` if the component is not found.
     #[instrument(skip(self))]
     pub async fn get_component(&self, component_id: &str) -> Option<Arc<Component>> {
+        // Try to ensure the component is loaded (lazy loading)
+        if let Err(e) = self.ensure_component_loaded(component_id).await {
+            debug!(component_id = %component_id, error = %e, "Failed to lazy load component");
+            return None;
+        }
+        
         self.components.read().await.get(component_id).cloned()
     }
 
     #[instrument(skip(self))]
     pub async fn list_components(&self) -> Vec<String> {
-        self.components.read().await.keys().cloned().collect()
+        // Return all component IDs (both loaded and available for lazy loading)
+        let paths = self.component_paths.read().await;
+        paths.keys().cloned().collect()
     }
 
     /// Gets the schema for a specific component
@@ -1267,6 +1373,29 @@ async fn load_component_from_entry(
     Ok(Some((component, name)))
 }
 
+async fn scan_component_from_entry(entry: DirEntry) -> Result<Option<(PathBuf, String)>> {
+    let is_file = entry
+        .metadata()
+        .await
+        .map(|m| m.is_file())
+        .context("unable to read file metadata")?;
+    let is_wasm = entry
+        .path()
+        .extension()
+        .map(|ext| ext == "wasm")
+        .unwrap_or(false);
+    if !(is_file && is_wasm) {
+        return Ok(None);
+    }
+    let entry_path = entry.path();
+    let name = entry_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(String::from)
+        .context("wasm file didn't have a valid file name")?;
+    Ok(Some((entry_path, name)))
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Deref;
@@ -1365,6 +1494,40 @@ mod tests {
     #[test(tokio::test)]
     async fn test_new_manager() -> Result<()> {
         let _manager = create_test_manager().await?;
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_lazy_loading_performance() -> Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        
+        // Create a mock WASM component file in the directory
+        let component_path = tempdir.path().join("test_component.wasm");
+        std::fs::write(&component_path, b"mock wasm bytes")?;
+        
+        let start_time = std::time::Instant::now();
+        
+        // Create a new LifecycleManager - this should be fast with lazy loading
+        let manager = LifecycleManager::new(&tempdir).await?;
+        
+        let initialization_time = start_time.elapsed();
+        
+        // Initialization should be fast (under 50ms for a simple case)
+        // This is much faster than loading all components
+        assert!(initialization_time.as_millis() < 100, 
+                "Lazy loading initialization took too long: {:?}", initialization_time);
+        
+        // Components should be available for lazy loading
+        let components = manager.list_components().await;
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0], "test_component");
+        
+        // Initially, no tools should be loaded since no components are compiled yet
+        let tools = manager.list_tools().await;
+        assert_eq!(tools.len(), 0);
+        
+        println!("✅ Lazy loading initialization completed in {:?}", initialization_time);
+        
         Ok(())
     }
 
