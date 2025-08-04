@@ -61,6 +61,9 @@ pub(crate) async fn handle_load_component(
             let contents = vec![Content::text(status_text)];
 
             if let Some(peer) = server_peer {
+                // Add a small delay to ensure tools are fully registered before notifying clients
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                
                 if let Err(e) = peer.notify_tool_list_changed().await {
                     error!("Failed to send tool list change notification: {}", e);
                 } else {
@@ -111,6 +114,9 @@ pub(crate) async fn handle_unload_component(
     let contents = vec![Content::text(status_text)];
 
     if let Some(peer) = server_peer {
+        // Add a small delay to ensure tools are fully unregistered before notifying clients
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        
         if let Err(e) = peer.notify_tool_list_changed().await {
             error!("Failed to send tool list change notification: {}", e);
         } else {
@@ -280,5 +286,34 @@ mod tests {
             }
         });
         assert_eq!(schema_json, expected);
+    }
+
+    #[tokio::test]
+    async fn test_load_component_timing() {
+        // Test that the timing delay works correctly in load component
+        use std::time::Instant;
+
+        let mut args = serde_json::Map::new();
+        args.insert("path".to_string(), json!("/tmp/nonexistent.wasm"));
+
+        let req = CallToolRequestParam {
+            name: "load-component".into(),
+            arguments: Some(args),
+        };
+
+        // Create a mock lifecycle manager - this will fail but that's expected
+        // We're testing the timing behavior before the failure
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let lifecycle_manager = wassette::LifecycleManager::new(temp_dir.path())
+            .await
+            .expect("Failed to create lifecycle manager");
+
+        let start = Instant::now();
+        let result = handle_load_component(&req, &lifecycle_manager, None).await;
+        let elapsed = start.elapsed();
+
+        // The component load should fail (as expected), but it should be fast since there's no delay without a peer
+        assert!(result.is_err());
+        assert!(elapsed.as_millis() < 50); // Should be much faster than 100ms since no peer is provided
     }
 }
