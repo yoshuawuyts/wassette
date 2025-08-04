@@ -536,6 +536,240 @@ async fn test_stdio_transport() -> Result<()> {
 }
 
 #[test(tokio::test)]
+async fn test_tool_list_notification() -> Result<()> {
+    // Create a temporary directory for this test to avoid loading existing components
+    let temp_dir = tempfile::tempdir()?;
+    let plugin_dir_arg = format!("--plugin-dir={}", temp_dir.path().display());
+
+    // Get the path to the built binary
+    let binary_path = std::env::current_dir()
+        .context("Failed to get current directory")?
+        .join("target/debug/wassette");
+
+    // Start the server with stdio transport (disable logs to avoid stdout pollution)
+    let mut child = tokio::process::Command::new(&binary_path)
+        .args(["serve", &plugin_dir_arg])
+        .env("RUST_LOG", "off")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to start wassette with stdio transport")?;
+
+    let stdin = child.stdin.take().context("Failed to get stdin handle")?;
+    let stdout = child.stdout.take().context("Failed to get stdout handle")?;
+    let stderr = child.stderr.take().context("Failed to get stderr handle")?;
+
+    let mut stdin = stdin;
+    let mut stdout = BufReader::new(stdout);
+    let mut stderr = BufReader::new(stderr);
+
+    // Give the server time to start
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Check if the process is still running
+    if let Ok(Some(status)) = child.try_wait() {
+        let mut stderr_output = String::new();
+        let _ = stderr.read_line(&mut stderr_output).await;
+        return Err(anyhow::anyhow!(
+            "Server process exited with status: {:?}, stderr: {}",
+            status,
+            stderr_output
+        ));
+    }
+
+    // Send MCP initialize request
+    let initialize_request = r#"{"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}, "id": 1}
+"#;
+
+    stdin.write_all(initialize_request.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Read and verify initialize response
+    let mut response_line = String::new();
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        stdout.read_line(&mut response_line),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            return Err(anyhow::anyhow!("Failed to read initialize response: {}", e));
+        }
+        Err(_) => {
+            let mut stderr_output = String::new();
+            let _ =
+                tokio::time::timeout(Duration::from_secs(1), stderr.read_line(&mut stderr_output))
+                    .await;
+            return Err(anyhow::anyhow!(
+                "Timeout waiting for initialize response. Stderr: {}",
+                stderr_output
+            ));
+        }
+    }
+
+    let response: serde_json::Value =
+        serde_json::from_str(&response_line).context("Failed to parse initialize response")?;
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 1);
+    assert!(response["result"].is_object());
+
+    // Send initialized notification (required by MCP protocol)
+    let initialized_notification = r#"{"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+"#;
+
+    stdin.write_all(initialized_notification.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Step 1: Send initial list_tools request to get baseline tool count
+    let list_tools_request = r#"{"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2}
+"#;
+
+    stdin.write_all(list_tools_request.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Read initial tools list response
+    let mut tools_response_line = String::new();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        stdout.read_line(&mut tools_response_line),
+    )
+    .await
+    .context("Timeout waiting for initial tools/list response")?
+    .context("Failed to read initial tools/list response")?;
+
+    let initial_tools_response: serde_json::Value = serde_json::from_str(&tools_response_line)
+        .context("Failed to parse initial tools/list response")?;
+
+    assert_eq!(initial_tools_response["jsonrpc"], "2.0");
+    assert_eq!(initial_tools_response["id"], 2);
+    assert!(initial_tools_response["result"].is_object());
+    assert!(initial_tools_response["result"]["tools"].is_array());
+
+    let initial_tools = &initial_tools_response["result"]["tools"]
+        .as_array()
+        .unwrap();
+    let initial_tool_count = initial_tools.len();
+    println!("Initial tool count: {}", initial_tool_count);
+
+    // Build a component to load
+    let component_path = build_fetch_component().await?;
+
+    // Step 2: Load a component using the load-component tool
+    let load_component_request = format!(
+        r#"{{"jsonrpc": "2.0", "method": "tools/call", "params": {{"name": "load-component", "arguments": {{"path": "file://{}"}}}}, "id": 3}}
+"#,
+        component_path.to_str().unwrap()
+    );
+
+    stdin.write_all(load_component_request.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Read the tool list change notification first (this is what we're testing!)
+    let mut notification_line = String::new();
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        stdout.read_line(&mut notification_line),
+    )
+    .await
+    .context("Timeout waiting for tool list change notification")?
+    .context("Failed to read tool list change notification")?;
+
+    let notification: serde_json::Value = serde_json::from_str(&notification_line)
+        .context("Failed to parse tool list change notification")?;
+
+    // Verify we received a tools/list_changed notification
+    assert_eq!(notification["jsonrpc"], "2.0");
+    assert_eq!(notification["method"], "notifications/tools/list_changed");
+    println!("✓ Received tools/list_changed notification as expected");
+
+    // Read the actual load-component response
+    let mut load_response_line = String::new();
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        stdout.read_line(&mut load_response_line),
+    )
+    .await
+    .context("Timeout waiting for load-component response")?
+    .context("Failed to read load-component response")?;
+
+    let load_response: serde_json::Value = serde_json::from_str(&load_response_line)
+        .context("Failed to parse load-component response")?;
+
+    assert_eq!(load_response["jsonrpc"], "2.0");
+    assert_eq!(load_response["id"], 3);
+
+    // Check if the load succeeded
+    if load_response["error"].is_object() {
+        panic!("Failed to load component: {}", load_response["error"]);
+    }
+    assert!(load_response["result"].is_object());
+    println!("✓ Component loaded successfully");
+
+    // Step 3: Send another list_tools request to verify tools were added
+    let list_tools_request_after = r#"{"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 4}
+"#;
+
+    stdin.write_all(list_tools_request_after.as_bytes()).await?;
+    stdin.flush().await?;
+
+    // Read updated tools list response
+    let mut updated_tools_response_line = String::new();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        stdout.read_line(&mut updated_tools_response_line),
+    )
+    .await
+    .context("Timeout waiting for updated tools/list response")?
+    .context("Failed to read updated tools/list response")?;
+
+    let updated_tools_response: serde_json::Value =
+        serde_json::from_str(&updated_tools_response_line)
+            .context("Failed to parse updated tools/list response")?;
+
+    assert_eq!(updated_tools_response["jsonrpc"], "2.0");
+    assert_eq!(updated_tools_response["id"], 4);
+    assert!(updated_tools_response["result"].is_object());
+    assert!(updated_tools_response["result"]["tools"].is_array());
+
+    let updated_tools = &updated_tools_response["result"]["tools"]
+        .as_array()
+        .unwrap();
+    let updated_tool_count = updated_tools.len();
+    println!("Updated tool count: {}", updated_tool_count);
+
+    // Verify that the tool count increased after loading the component
+    assert!(
+        updated_tool_count > initial_tool_count,
+        "Tool count should have increased from {} to {}, but it didn't",
+        initial_tool_count,
+        updated_tool_count
+    );
+    println!("✓ Tool count increased as expected after loading component");
+
+    // Verify that the new tools from the component are present
+    let updated_tool_names: Vec<String> = updated_tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap_or("").to_string())
+        .collect();
+
+    // The fetch component should add a "fetch" tool
+    assert!(
+        updated_tool_names.contains(&"fetch".to_string()),
+        "Expected 'fetch' tool from loaded component, but found tools: {:?}",
+        updated_tool_names
+    );
+    println!("✓ New tools from loaded component are present in the list");
+
+    // Clean up
+    child.kill().await.ok();
+
+    Ok(())
+}
+
+#[test(tokio::test)]
 async fn test_http_transport() -> Result<()> {
     // Use a random available port to avoid conflicts
     let port = find_open_port().await?;
