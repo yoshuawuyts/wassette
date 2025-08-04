@@ -180,19 +180,37 @@ Key points:
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Initialize logging based on transport mode
+    // For stdio transport, default to "off" to avoid interfering with MCP protocol
+    // For HTTP transport, keep the existing default logging level
+    let default_log_level = match &cli.command {
+        Commands::Serve { stdio, http, .. } => {
+            match (*stdio, *http) {
+                (false, false) | (true, false) => {
+                    // Using stdio transport (default or explicit) - disable logging by default
+                    "off"
+                }
+                (false, true) => {
+                    // Using HTTP transport - keep existing logging behavior
+                    "info,cranelift_codegen=warn,cranelift_entity=warn,cranelift_bforest=warn,cranelift_frontend=warn"
+                }
+                (true, true) => {
+                    // Invalid combination - will error later, but use "off" for now
+                    "off"
+                }
+            }
+        }
+    };
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| {
-                    "info,cranelift_codegen=warn,cranelift_entity=warn,cranelift_bforest=warn,cranelift_frontend=warn"
-                        .to_string()
-                        .into()
-                }),
+                .unwrap_or_else(|_| default_log_level.to_string().into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
-
-    let cli = Cli::parse();
 
     match &cli.command {
         Commands::Serve {
