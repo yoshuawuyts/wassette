@@ -28,13 +28,20 @@ pub struct NetworkPermissions {
 /// this includes the wasmtime_wasi, wasmtime_wasi_config and wasmtime_wasi_http states
 #[derive(Clone)]
 pub struct WasiStateTemplate {
+    /// Whether to allow stdout access
     pub allow_stdout: bool,
+    /// Whether to allow stderr access
     pub allow_stderr: bool,
+    /// Whether to allow command line arguments access
     pub allow_args: bool,
+    /// Network permissions configuration
     pub network_perms: NetworkPermissions,
-    pub config_vars: HashMap<String, String>, // wamstime_wasi_config specific state
+    /// Configuration variables for wasmtime_wasi_config
+    pub config_vars: HashMap<String, String>,
+    /// Preopened directories for filesystem access
     pub preopened_dirs: Vec<PreopenedDir>,
-    pub allowed_hosts: HashSet<String>, // allowed network hosts for HTTP requests
+    /// Allowed network hosts for HTTP requests
+    pub allowed_hosts: HashSet<String>,
 }
 
 impl Default for WasiStateTemplate {

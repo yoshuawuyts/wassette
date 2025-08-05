@@ -1,6 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+//! A security-oriented runtime that runs WebAssembly Components via MCP
+
+#![warn(missing_docs)]
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -40,12 +44,16 @@ const DOWNLOADS_DIR: &str = "downloads";
 /// Granular permission rule types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PermissionRule {
+    /// Network access permission
     #[serde(rename = "network")]
     Network(NetworkPermission),
+    /// File system storage permission
     #[serde(rename = "storage")]
     Storage(StoragePermission),
+    /// Environment variable access permission
     #[serde(rename = "environment")]
     Environment(EnvironmentPermission),
+    /// Custom permission with arbitrary data
     #[serde(rename = "custom")]
     Custom(String, serde_json::Value),
 }
@@ -53,8 +61,11 @@ pub enum PermissionRule {
 /// Permission grant request structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionGrantRequest {
+    /// The ID of the component requesting permission
     pub component_id: String,
+    /// The type of permission being requested
     pub permission_type: String,
+    /// Additional details specific to the permission type
     pub details: serde_json::Value,
 }
 
@@ -206,17 +217,25 @@ impl ComponentRegistry {
     }
 }
 
+/// Registry for storing policy templates associated with components
 #[derive(Default)]
 struct PolicyRegistry {
+    /// Maps component IDs to their associated policy templates
     component_policies: HashMap<String, Arc<WasiStateTemplate>>,
 }
 
+/// Information about a policy attached to a component
 #[derive(Debug, Clone)]
 pub struct PolicyInfo {
+    /// Unique identifier for the policy
     pub policy_id: String,
+    /// The original URI where the policy was loaded from
     pub source_uri: String,
+    /// Local filesystem path where the policy is stored
     pub local_path: PathBuf,
+    /// ID of the component this policy is attached to
     pub component_id: String,
+    /// Timestamp when the policy was created/attached
     pub created_at: std::time::SystemTime,
 }
 
@@ -761,6 +780,7 @@ impl LifecycleManager {
         self.components.read().await.get(component_id).cloned()
     }
 
+    /// Lists all loaded components by their IDs
     #[instrument(skip(self))]
     pub async fn list_components(&self) -> Vec<String> {
         self.components.read().await.keys().cloned().collect()

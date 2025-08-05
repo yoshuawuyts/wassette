@@ -1,6 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+//! The main `wassette(1)` command.
+
+#![warn(missing_docs)]
+
 use std::env;
 use std::future::Future;
 use std::path::PathBuf;
@@ -33,6 +37,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Begin handling requests over the specified protocol.
     Serve {
         #[arg(long, default_value_t = get_component_dir().into_os_string().into_string().unwrap())]
         plugin_dir: String,
@@ -73,12 +78,17 @@ fn get_component_dir() -> PathBuf {
     }
 }
 
+/// A security-oriented runtime that runs WebAssembly Components via MCP.
 #[derive(Clone)]
 pub struct McpServer {
     lifecycle_manager: LifecycleManager,
 }
 
 impl McpServer {
+    /// Creates a new MCP server instance with the given lifecycle manager.
+    ///
+    /// # Arguments
+    /// * `lifecycle_manager` - The lifecycle manager for handling component operations
     pub fn new(lifecycle_manager: LifecycleManager) -> Self {
         Self { lifecycle_manager }
     }
