@@ -8,20 +8,20 @@ class Wassette < Formula
   on_macos do
     if Hardware::CPU.intel?
       url "https://github.com/microsoft/wassette/releases/download/v#{version}/wassette_#{version}_darwin_amd64.tar.gz"
-      sha256 "4b2624fa6060be45b5b7ab97d45bbe387961653e33edb9fd1fa1bd7678172ad7"
+      sha256 "29484bc445907ced569b22adf1c2ec8a244c55818a3a7e26ed49af7ba1203be2"
     else
       url "https://github.com/microsoft/wassette/releases/download/v#{version}/wassette_#{version}_darwin_arm64.tar.gz"
-      sha256 "67aaaea5be1ed8d56be2a11de5e6eb1e66336fcb7c6fdf3f0df82f9ba6b62642"
+      sha256 "9ce7611910b430f5f4a631d420743ecc831883178e72309ddc21269efcf1a2c6"
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
       url "https://github.com/microsoft/wassette/releases/download/v#{version}/wassette_#{version}_linux_amd64.tar.gz"
-      sha256 "4d92aba7d31bda7b0dad399f7885a452473440ac20e9d1f764a4e199b4bb387b"
+      sha256 "ee75388f649244a6fb1d15b864a5551e761213315d1bd4cf710b29b17e4f5435"
     else
       url "https://github.com/microsoft/wassette/releases/download/v#{version}/wassette_#{version}_linux_arm64.tar.gz"
-      sha256 "556560a34d208f21ae6b733a26a3d5d1898cb4aea0989abd4762b38bea717e9b"
+      sha256 "f0461a51b13b24acda002b42df08846d6d001d021d3fd91ea316521d4f417ecf"
     end
   end
 
