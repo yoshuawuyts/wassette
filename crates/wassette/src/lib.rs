@@ -703,11 +703,7 @@ impl LifecycleManager {
         self.components.write().await.remove(id);
         self.registry.write().await.unregister_component(id);
 
-        self.policy_registry
-            .write()
-            .await
-            .component_policies
-            .remove(id);
+        self.cleanup_policy_registry(id).await;
 
         let component_file = self.component_path(id);
         self.remove_file_if_exists(&component_file, "component file", id)
@@ -717,7 +713,7 @@ impl LifecycleManager {
         self.remove_file_if_exists(&policy_path, "policy file", id)
             .await?;
 
-        let metadata_path = self.plugin_dir.join(format!("{id}.policy.meta.json"));
+        let metadata_path = self.get_component_metadata_path(id);
         self.remove_file_if_exists(&metadata_path, "policy metadata file", id)
             .await?;
 
@@ -785,8 +781,22 @@ impl LifecycleManager {
         self.plugin_dir.join(format!("{component_id}.policy.yaml"))
     }
 
+    fn get_component_metadata_path(&self, component_id: &str) -> PathBuf {
+        self.plugin_dir
+            .join(format!("{component_id}.policy.meta.json"))
+    }
+
     fn create_default_policy_template() -> Arc<WasiStateTemplate> {
         Arc::new(WasiStateTemplate::default())
+    }
+
+    /// Helper function to clean up policy registry for a component
+    async fn cleanup_policy_registry(&self, component_id: &str) {
+        self.policy_registry
+            .write()
+            .await
+            .component_policies
+            .remove(component_id);
     }
 
     async fn get_wasi_state_for_component(
@@ -833,9 +843,7 @@ impl LifecycleManager {
             "source_uri": policy_uri,
             "attached_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
         });
-        let metadata_path = self
-            .plugin_dir
-            .join(format!("{component_id}.policy.meta.json"));
+        let metadata_path = self.get_component_metadata_path(component_id);
         tokio::fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?).await?;
 
         let wasi_template =
@@ -855,19 +863,13 @@ impl LifecycleManager {
     pub async fn detach_policy(&self, component_id: &str) -> Result<()> {
         info!(component_id, "Detaching policy from component");
 
-        self.policy_registry
-            .write()
-            .await
-            .component_policies
-            .remove(component_id);
+        self.cleanup_policy_registry(component_id).await;
 
         let policy_path = self.get_component_policy_path(component_id);
         self.remove_file_if_exists(&policy_path, "policy file", component_id)
             .await?;
 
-        let metadata_path = self
-            .plugin_dir
-            .join(format!("{component_id}.policy.meta.json"));
+        let metadata_path = self.get_component_metadata_path(component_id);
         self.remove_file_if_exists(&metadata_path, "policy metadata file", component_id)
             .await?;
 
@@ -886,9 +888,7 @@ impl LifecycleManager {
             return None;
         }
 
-        let metadata_path = self
-            .plugin_dir
-            .join(format!("{component_id}.policy.meta.json"));
+        let metadata_path = self.get_component_metadata_path(component_id);
         let source_uri =
             if let Ok(metadata_content) = tokio::fs::read_to_string(&metadata_path).await {
                 if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_content) {
