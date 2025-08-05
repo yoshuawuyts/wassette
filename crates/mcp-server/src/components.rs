@@ -122,7 +122,6 @@ pub(crate) async fn handle_unload_component(
                     "Sent tool list changed notification after unloading component"
                 );
             }
-            
 
             Ok(CallToolResult {
                 content: contents,
