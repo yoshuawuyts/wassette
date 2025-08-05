@@ -618,7 +618,7 @@ impl LifecycleManager {
     /// Returns the new ID and whether or not this component was replaced.
     #[instrument(skip(self))]
     pub async fn load_component(&self, uri: &str) -> Result<(String, LoadResult)> {
-        debug!("Loading component from URI: {}", uri);
+        debug!(uri, "Loading component");
 
         let downloaded_resource =
             load_resource::<ComponentResource>(uri, &self.oci_client, &self.http_client).await?;

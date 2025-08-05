@@ -14,15 +14,15 @@ pub(crate) async fn get_component_tools(lifecycle_manager: &LifecycleManager) ->
     debug!("Listing components");
     let component_ids = lifecycle_manager.list_components().await;
 
-    info!("Found {} components", component_ids.len());
+    info!(count = component_ids.len(), "Found components");
     let mut tools = Vec::new();
 
     for id in component_ids {
-        debug!("Getting component details for {}", id);
+        debug!(component_id = %id, "Getting component details");
         if let Some(schema) = lifecycle_manager.get_component_schema(&id).await {
             if let Some(arr) = schema.get("tools").and_then(|v| v.as_array()) {
                 let tool_count = arr.len();
-                debug!("Found {} tools in component {}", tool_count, id);
+                debug!(component_id = %id, tool_count, "Found tools in component");
                 for tool_json in arr {
                     if let Some(tool) = parse_tool_schema(tool_json) {
                         tools.push(tool);
@@ -31,7 +31,7 @@ pub(crate) async fn get_component_tools(lifecycle_manager: &LifecycleManager) ->
             }
         }
     }
-    info!("Total tools collected: {}", tools.len());
+    info!(total_tools = tools.len(), "Total tools collected");
     Ok(tools)
 }
 
@@ -39,7 +39,7 @@ pub(crate) async fn get_component_tools(lifecycle_manager: &LifecycleManager) ->
 pub(crate) async fn handle_load_component(
     req: &CallToolRequestParam,
     lifecycle_manager: &LifecycleManager,
-    server_peer: Option<Peer<RoleServer>>,
+    server_peer: Peer<RoleServer>,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
     let path = args
@@ -47,7 +47,7 @@ pub(crate) async fn handle_load_component(
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing required argument: 'path'"))?;
 
-    info!("Loading component from path {}", path);
+    info!(path, "Loading component");
 
     let result = lifecycle_manager.load_component(path).await;
 
@@ -60,15 +60,18 @@ pub(crate) async fn handle_load_component(
 
             let contents = vec![Content::text(status_text)];
 
-            if let Some(peer) = server_peer {
-                if let Err(e) = peer.notify_tool_list_changed().await {
-                    error!("Failed to send tool list change notification: {}", e);
-                } else {
-                    info!(
-                        "Sent tool list changed notification after loading component {}",
-                        id
-                    );
-                }
+            info!(
+                component_id = %id,
+                "Notifying server peer about tool list change after loading component"
+            );
+            // Notify the server peer about the tool list change
+            if let Err(e) = server_peer.notify_tool_list_changed().await {
+                error!(error = %e, "Failed to send tool list change notification");
+            } else {
+                info!(
+                    component_id = %id,
+                    "Sent tool list changed notification after loading component"
+                );
             }
 
             Ok(CallToolResult {
@@ -77,7 +80,7 @@ pub(crate) async fn handle_load_component(
             })
         }
         Err(e) => {
-            error!("Failed to load component: {}", e);
+            error!(error = %e, path, "Failed to load component");
             Err(anyhow::anyhow!(
                 "Failed to load component: {}. Error: {}",
                 path,
@@ -91,7 +94,7 @@ pub(crate) async fn handle_load_component(
 pub(crate) async fn handle_unload_component(
     req: &CallToolRequestParam,
     lifecycle_manager: &LifecycleManager,
-    server_peer: Option<Peer<RoleServer>>,
+    server_peer: Peer<RoleServer>,
 ) -> Result<CallToolResult> {
     let args = extract_args_from_request(req)?;
 
@@ -100,7 +103,7 @@ pub(crate) async fn handle_unload_component(
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'id' in arguments"))?;
 
-    info!("Unloading component {}", id);
+    info!(component_id = %id, "Unloading component");
     lifecycle_manager.unload_component(id).await;
 
     let status_text = serde_json::to_string(&json!({
@@ -110,15 +113,13 @@ pub(crate) async fn handle_unload_component(
 
     let contents = vec![Content::text(status_text)];
 
-    if let Some(peer) = server_peer {
-        if let Err(e) = peer.notify_tool_list_changed().await {
-            error!("Failed to send tool list change notification: {}", e);
-        } else {
-            info!(
-                "Sent tool list changed notification after unloading component {}",
-                id
-            );
-        }
+    if let Err(e) = server_peer.notify_tool_list_changed().await {
+        error!(error = %e, "Failed to send tool list change notification");
+    } else {
+        info!(
+            component_id = %id,
+            "Sent tool list changed notification after unloading component"
+        );
     }
 
     Ok(CallToolResult {
@@ -135,7 +136,7 @@ pub(crate) async fn handle_component_call(
     let args = extract_args_from_request(req)?;
 
     let method_name = req.name.to_string();
-    info!("Calling function {}", method_name);
+    info!(function_name = %method_name, "Calling function");
 
     let component_id = lifecycle_manager
         .get_component_id_for_tool(&method_name)
@@ -159,7 +160,7 @@ pub(crate) async fn handle_component_call(
             })
         }
         Err(e) => {
-            error!("Component call failed: {}", e);
+            error!(error = %e, "Component call failed");
             Err(anyhow::anyhow!(e.to_string()))
         }
     }
@@ -175,7 +176,7 @@ pub(crate) async fn handle_list_components(
 
     let components_info = stream::iter(component_ids)
         .map(|id| async move {
-            debug!("Getting component details for {}", id);
+            debug!(component_id = %id, "Getting component details");
             if let Some(schema) = lifecycle_manager.get_component_schema(&id).await {
                 let tools_count = schema
                     .get("tools")
@@ -240,7 +241,7 @@ fn parse_tool_schema(tool_json: &Value) -> Option<Tool> {
 
     let input_schema = tool_json.get("inputSchema").cloned().unwrap_or(json!({}));
 
-    debug!("Parsed tool schema for {}", name);
+    debug!(tool_name = %name, "Parsed tool schema");
 
     Some(Tool {
         name: Cow::Owned(name.to_string()),

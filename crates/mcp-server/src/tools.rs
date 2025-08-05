@@ -35,7 +35,7 @@ pub async fn handle_tools_list(lifecycle_manager: &LifecycleManager) -> Result<V
 pub async fn handle_tools_call(
     req: CallToolRequestParam,
     lifecycle_manager: &LifecycleManager,
-    server_peer: Option<Peer<RoleServer>>,
+    server_peer: Peer<RoleServer>,
 ) -> Result<Value> {
     info!("Handling tool call");
 

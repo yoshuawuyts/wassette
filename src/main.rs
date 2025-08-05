@@ -73,15 +73,11 @@ fn get_component_dir() -> PathBuf {
 #[derive(Clone)]
 pub struct McpServer {
     lifecycle_manager: LifecycleManager,
-    peer: Option<rmcp::service::Peer<RoleServer>>,
 }
 
 impl McpServer {
     pub fn new(lifecycle_manager: LifecycleManager) -> Self {
-        Self {
-            lifecycle_manager,
-            peer: None,
-        }
+        Self { lifecycle_manager }
     }
 }
 
@@ -114,9 +110,9 @@ Key points:
     fn call_tool<'a>(
         &'a self,
         params: CallToolRequestParam,
-        _ctx: RequestContext<RoleServer>,
+        ctx: RequestContext<RoleServer>,
     ) -> Pin<Box<dyn Future<Output = Result<CallToolResult, ErrorData>> + Send + 'a>> {
-        let peer_clone = self.peer.clone();
+        let peer_clone = ctx.peer.clone();
 
         Box::pin(async move {
             let result = handle_tools_call(params, &self.lifecycle_manager, peer_clone).await;
