@@ -19,20 +19,39 @@ Wassette uses semantic versioning. All releases follow the format `vX.Y.Z`, wher
 
 ## Steps to Cut a Release
 
-1. **Prepare the Release branch**:
+1. **Update the version**: Before creating a release, ensure that the version number in the `Cargo.toml` file is updated to reflect the new release version. This should follow semantic versioning.
 
-   ```bash
-   git checkout main
-   git pull origin main
+   For example, if the current version is `0.1.0` and you are releasing a patch, update it to `0.1.1`.
+
+   ```toml
+   [package]
+   name = "wassette"
+   version = "0.1.1" # Update this line
    ```
 
-1. **Create a new tag**: To initiate a release, create a new tag in the Git repository. This can be done using the following command:
+   ```bash
+   # commit the version change
+   git add Cargo.toml
+   git commit -m "Bump version to 0.1.1"
+   ```
 
    ```bash
-   git tag <tag_name> # e.g., v0.1.0
+   # push the changes to the release branch
+   git push origin <branch_name>
+   ```
+
+1. **Open a Pull Request to main**: Create a pull request to merge the changes into the main branch. This allows for code review and ensures that the version bump is properly documented.
+
+1. **Create a new tag**: Once the pull request is merged, create a new tag for the release. The tag should follow the semantic versioning format and be prefixed with `v`.
+
+   ```bash
+   # Checkout the main branch and pull the latest changes
+   git checkout main
+   git pull origin main
+
+   # Create a new tag
+   git tag -s <tag_name> -m "Release <tag_name>" # e.g., v0.1.0
    git push origin <tag_name> # e.g., v0.1.0
    ```
 
-1. **Trigger the release workflow**: Once the tag is pushed, the `release.yml` workflow will be triggered automatically. You can monitor the progress of the workflow in the "Actions" tab of the GitHub repository.
-
-1. **Download the compiled binaries**: After the workflow completes successfully, the compiled binaries for each platform will be available for download in the "[Releases](https://github.com/microsoft/wassette/releases)" section of the GitHub repository.
+1. **Trigger the release workflow**: Once the tag is pushed, the `release.yml` workflow will be triggered automatically. You can monitor the progress of the workflow in the "Actions" tab of the GitHub repository. After the workflow completes successfully, the compiled binaries for each platform will be available for download in the "[Releases](https://github.com/microsoft/wassette/releases)" section of the GitHub repository.
