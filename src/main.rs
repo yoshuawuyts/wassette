@@ -176,18 +176,6 @@ Key points:
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| {
-                    "info,cranelift_codegen=warn,cranelift_entity=warn,cranelift_bforest=warn,cranelift_frontend=warn"
-                        .to_string()
-                        .into()
-                }),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
-
     let cli = Cli::parse();
 
     match &cli.command {
@@ -196,49 +184,64 @@ async fn main() -> Result<()> {
             stdio,
             http,
         } => {
+            // Initialize logging based on transport type
+            let use_stdio_transport = match (*stdio, *http) {
+                (false, false) => true, // Default case: use stdio transport
+                (true, false) => true,  // Stdio transport only
+                (false, true) => false, // HTTP transport only
+                (true, true) => {
+                    return Err(anyhow::anyhow!(
+                        "Running both stdio and HTTP transports simultaneously is not supported. Please choose one."
+                    ));
+                }
+            };
+
+            // Configure logging - use stderr for stdio transport to avoid interfering with MCP protocol
+            let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| {
+                    "info,cranelift_codegen=warn,cranelift_entity=warn,cranelift_bforest=warn,cranelift_frontend=warn"
+                        .to_string()
+                        .into()
+                });
+
+            let registry = tracing_subscriber::registry().with(env_filter);
+
+            if use_stdio_transport {
+                registry
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .with_writer(std::io::stderr)
+                            .with_ansi(false),
+                    )
+                    .init();
+            } else {
+                registry.with(tracing_subscriber::fmt::layer()).init();
+            }
+
             let components_dir = PathBuf::from(plugin_dir);
 
             let lifecycle_manager = LifecycleManager::new(&components_dir).await?;
 
             let server = McpServer::new(lifecycle_manager);
 
-            match (*stdio, *http) {
-                (false, false) => {
-                    // Default case: use stdio transport
-                    tracing::info!("Starting MCP server with stdio transport (default)");
-                    let transport = stdio_transport();
-                    let running_service = serve_server(server, transport).await?;
+            if use_stdio_transport {
+                tracing::info!("Starting MCP server with stdio transport");
+                let transport = stdio_transport();
+                let running_service = serve_server(server, transport).await?;
 
-                    tokio::signal::ctrl_c().await?;
-                    let _ = running_service.cancel().await;
-                }
-                (true, false) => {
-                    // Stdio transport only
-                    tracing::info!("Starting MCP server with stdio transport");
-                    let transport = stdio_transport();
-                    let running_service = serve_server(server, transport).await?;
+                tokio::signal::ctrl_c().await?;
+                let _ = running_service.cancel().await;
+            } else {
+                tracing::info!(
+                    "Starting MCP server on {} with HTTP transport",
+                    BIND_ADDRESS
+                );
+                let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
+                    .await?
+                    .with_service(move || server.clone());
 
-                    tokio::signal::ctrl_c().await?;
-                    let _ = running_service.cancel().await;
-                }
-                (false, true) => {
-                    // HTTP transport only
-                    tracing::info!(
-                        "Starting MCP server on {} with HTTP transport",
-                        BIND_ADDRESS
-                    );
-                    let ct = SseServer::serve(BIND_ADDRESS.parse().unwrap())
-                        .await?
-                        .with_service(move || server.clone());
-
-                    tokio::signal::ctrl_c().await?;
-                    ct.cancel();
-                }
-                (true, true) => {
-                    return Err(anyhow::anyhow!(
-                        "Running both stdio and HTTP transports simultaneously is not supported. Please choose one."
-                    ));
-                }
+                tokio::signal::ctrl_c().await?;
+                ct.cancel();
             }
 
             tracing::info!("MCP server shutting down");
