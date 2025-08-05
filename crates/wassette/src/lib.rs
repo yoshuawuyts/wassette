@@ -659,29 +659,67 @@ impl LifecycleManager {
         Ok((id, res))
     }
 
-    /// Unloads the component with the specified id. This does not remove the installed component,
-    /// only unloads it from the runtime. Use [`LifecycleManager::uninstall_component`] to remove
-    /// the component from the system.
-    #[instrument(skip(self))]
-    pub async fn unload_component(&self, id: &str) {
-        debug!("Unloading component");
-        self.components.write().await.remove(id);
-        self.registry.write().await.unregister_component(id);
+    /// Helper function to remove a file with consistent logging and error handling
+    async fn remove_file_if_exists(
+        &self,
+        file_path: &std::path::Path,
+        file_type: &str,
+        component_id: &str,
+    ) -> Result<()> {
+        match tokio::fs::remove_file(file_path).await {
+            Ok(()) => {
+                debug!(
+                    component_id = %component_id,
+                    path = %file_path.display(),
+                    "Removed {}", file_type
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!(
+                    component_id = %component_id,
+                    path = %file_path.display(),
+                    "{} already absent", file_type
+                );
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to remove {} at {}: {}",
+                    file_type,
+                    file_path.display(),
+                    e
+                ));
+            }
+        }
+        Ok(())
     }
 
-    /// Uninstalls the component from the system. This removes the component from the runtime and
-    /// removes the component from disk.
+    /// Unloads the component with the specified id. This removes the component from the runtime
+    /// and removes all associated files from disk, making it the reverse operation of load_component.
+    /// This function fails if any files cannot be removed (except when they don't exist).
     #[instrument(skip(self))]
-    pub async fn uninstall_component(&self, id: &str) -> Result<()> {
-        debug!("Uninstalling component");
-        self.unload_component(id).await;
+    pub async fn unload_component(&self, id: &str) -> Result<()> {
+        debug!("Unloading component and removing files from disk");
+
+        // Remove files first, then clean up memory on success
         let component_file = self.component_path(id);
-        tokio::fs::remove_file(&component_file)
-            .await
-            .context(format!(
-                "Failed to remove component file at {}. Please remove the file manually.",
-                component_file.display()
-            ))
+        self.remove_file_if_exists(&component_file, "component file", id)
+            .await?;
+
+        let policy_path = self.get_component_policy_path(id);
+        self.remove_file_if_exists(&policy_path, "policy file", id)
+            .await?;
+
+        let metadata_path = self.get_component_metadata_path(id);
+        self.remove_file_if_exists(&metadata_path, "policy metadata file", id)
+            .await?;
+
+        // Only cleanup memory after all files are successfully removed
+        self.components.write().await.remove(id);
+        self.registry.write().await.unregister_component(id);
+        self.cleanup_policy_registry(id).await;
+
+        info!(component_id = %id, "Component unloaded successfully");
+        Ok(())
     }
 
     /// Returns the component ID for a given tool name.
@@ -744,8 +782,22 @@ impl LifecycleManager {
         self.plugin_dir.join(format!("{component_id}.policy.yaml"))
     }
 
+    fn get_component_metadata_path(&self, component_id: &str) -> PathBuf {
+        self.plugin_dir
+            .join(format!("{component_id}.policy.meta.json"))
+    }
+
     fn create_default_policy_template() -> Arc<WasiStateTemplate> {
         Arc::new(WasiStateTemplate::default())
+    }
+
+    /// Helper function to clean up policy registry for a component
+    async fn cleanup_policy_registry(&self, component_id: &str) {
+        self.policy_registry
+            .write()
+            .await
+            .component_policies
+            .remove(component_id);
     }
 
     async fn get_wasi_state_for_component(
@@ -792,9 +844,7 @@ impl LifecycleManager {
             "source_uri": policy_uri,
             "attached_at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
         });
-        let metadata_path = self
-            .plugin_dir
-            .join(format!("{component_id}.policy.meta.json"));
+        let metadata_path = self.get_component_metadata_path(component_id);
         tokio::fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?).await?;
 
         let wasi_template =
@@ -814,23 +864,17 @@ impl LifecycleManager {
     pub async fn detach_policy(&self, component_id: &str) -> Result<()> {
         info!(component_id, "Detaching policy from component");
 
-        self.policy_registry
-            .write()
-            .await
-            .component_policies
-            .remove(component_id);
-
+        // Remove files first, then clean up memory on success
         let policy_path = self.get_component_policy_path(component_id);
-        if policy_path.exists() {
-            tokio::fs::remove_file(&policy_path).await?;
-        }
+        self.remove_file_if_exists(&policy_path, "policy file", component_id)
+            .await?;
 
-        let metadata_path = self
-            .plugin_dir
-            .join(format!("{component_id}.policy.meta.json"));
-        if metadata_path.exists() {
-            tokio::fs::remove_file(&metadata_path).await?;
-        }
+        let metadata_path = self.get_component_metadata_path(component_id);
+        self.remove_file_if_exists(&metadata_path, "policy metadata file", component_id)
+            .await?;
+
+        // Only cleanup memory after all files are successfully removed
+        self.cleanup_policy_registry(component_id).await;
 
         info!(component_id, "Policy detached successfully");
         Ok(())
@@ -847,9 +891,7 @@ impl LifecycleManager {
             return None;
         }
 
-        let metadata_path = self
-            .plugin_dir
-            .join(format!("{component_id}.policy.meta.json"));
+        let metadata_path = self.get_component_metadata_path(component_id);
         let source_uri =
             if let Ok(metadata_content) = tokio::fs::read_to_string(&metadata_path).await {
                 if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_content) {
@@ -1380,7 +1422,7 @@ mod tests {
         let loaded_components = manager.list_components().await;
         assert_eq!(loaded_components.len(), 1);
 
-        manager.unload_component(TEST_COMPONENT_ID).await;
+        manager.unload_component(TEST_COMPONENT_ID).await?;
 
         let loaded_components = manager.list_components().await;
         assert!(loaded_components.is_empty());
