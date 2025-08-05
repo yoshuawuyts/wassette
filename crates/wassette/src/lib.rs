@@ -700,11 +700,7 @@ impl LifecycleManager {
     pub async fn unload_component(&self, id: &str) -> Result<()> {
         debug!("Unloading component and removing files from disk");
 
-        self.components.write().await.remove(id);
-        self.registry.write().await.unregister_component(id);
-
-        self.cleanup_policy_registry(id).await;
-
+        // Remove files first, then clean up memory on success
         let component_file = self.component_path(id);
         self.remove_file_if_exists(&component_file, "component file", id)
             .await?;
@@ -716,6 +712,11 @@ impl LifecycleManager {
         let metadata_path = self.get_component_metadata_path(id);
         self.remove_file_if_exists(&metadata_path, "policy metadata file", id)
             .await?;
+
+        // Only cleanup memory after all files are successfully removed
+        self.components.write().await.remove(id);
+        self.registry.write().await.unregister_component(id);
+        self.cleanup_policy_registry(id).await;
 
         info!(component_id = %id, "Component unloaded successfully");
         Ok(())
@@ -863,8 +864,7 @@ impl LifecycleManager {
     pub async fn detach_policy(&self, component_id: &str) -> Result<()> {
         info!(component_id, "Detaching policy from component");
 
-        self.cleanup_policy_registry(component_id).await;
-
+        // Remove files first, then clean up memory on success
         let policy_path = self.get_component_policy_path(component_id);
         self.remove_file_if_exists(&policy_path, "policy file", component_id)
             .await?;
@@ -872,6 +872,9 @@ impl LifecycleManager {
         let metadata_path = self.get_component_metadata_path(component_id);
         self.remove_file_if_exists(&metadata_path, "policy metadata file", component_id)
             .await?;
+
+        // Only cleanup memory after all files are successfully removed
+        self.cleanup_policy_registry(component_id).await;
 
         info!(component_id, "Policy detached successfully");
         Ok(())
