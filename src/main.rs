@@ -37,6 +37,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Begin handling requests over the specified protocol.
     Serve {
         #[arg(long, default_value_t = get_component_dir().into_os_string().into_string().unwrap())]
         plugin_dir: String,
