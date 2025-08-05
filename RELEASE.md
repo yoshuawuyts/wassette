@@ -1,6 +1,6 @@
 # Release Process
 
-This document desribes the process for releasing new versions of the Wassette project.
+This document describes the process for releasing new versions of the Wassette project.
 
 ## Release.yml overview
 

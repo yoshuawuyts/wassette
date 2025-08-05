@@ -158,6 +158,7 @@ jobs:
 
             ### Linux
             - [AMD64 (tar.gz)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/wassette_${{ steps.version.outputs.version }}_linux_amd64.tar.gz)
+            - [ARM64 (tar.gz)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/wassette_${{ steps.version.outputs.version }}_linux_arm64.tar.gz)
 
             ### macOS (Darwin)
             - [AMD64/Intel (tar.gz)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/wassette_${{ steps.version.outputs.version }}_darwin_amd64.tar.gz)
@@ -165,6 +166,7 @@ jobs:
 
             ### Windows
             - [AMD64 (zip)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/wassette_${{ steps.version.outputs.version }}_windows_amd64.zip)
+            - [ARM64 (zip)](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/wassette_${{ steps.version.outputs.version }}_windows_arm64.zip)
 
             ## Install
 
