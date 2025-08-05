@@ -37,11 +37,11 @@ pub struct WasiStateTemplate {
     /// Network permissions configuration
     pub network_perms: NetworkPermissions,
     /// Configuration variables for wasmtime_wasi_config
-    pub config_vars: HashMap<String, String>, // wamstime_wasi_config specific state
+    pub config_vars: HashMap<String, String>,
     /// Preopened directories for filesystem access
     pub preopened_dirs: Vec<PreopenedDir>,
     /// Allowed network hosts for HTTP requests
-    pub allowed_hosts: HashSet<String>, // allowed network hosts for HTTP requests
+    pub allowed_hosts: HashSet<String>,
 }
 
 impl Default for WasiStateTemplate {
