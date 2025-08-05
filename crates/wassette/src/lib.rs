@@ -659,6 +659,40 @@ impl LifecycleManager {
         Ok((id, res))
     }
 
+    /// Helper function to remove a file with consistent logging and error handling
+    async fn remove_file_if_exists(
+        &self,
+        file_path: &std::path::Path,
+        file_type: &str,
+        component_id: &str,
+    ) -> Result<()> {
+        match tokio::fs::remove_file(file_path).await {
+            Ok(()) => {
+                debug!(
+                    component_id = %component_id,
+                    path = %file_path.display(),
+                    "Removed {}", file_type
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!(
+                    component_id = %component_id,
+                    path = %file_path.display(),
+                    "{} already absent", file_type
+                );
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to remove {} at {}: {}",
+                    file_type,
+                    file_path.display(),
+                    e
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Unloads the component with the specified id. This removes the component from the runtime
     /// and removes all associated files from disk, making it the reverse operation of load_component.
     /// This function fails if any files cannot be removed (except when they don't exist).
@@ -676,79 +710,16 @@ impl LifecycleManager {
             .remove(id);
 
         let component_file = self.component_path(id);
-        match tokio::fs::remove_file(&component_file).await {
-            Ok(()) => {
-                debug!(
-                    component_id = %id,
-                    path = %component_file.display(),
-                    "Removed component file"
-                );
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!(
-                    component_id = %id,
-                    path = %component_file.display(),
-                    "Component file already absent"
-                );
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to remove component file at {}: {}",
-                    component_file.display(),
-                    e
-                ));
-            }
-        }
+        self.remove_file_if_exists(&component_file, "component file", id)
+            .await?;
 
         let policy_path = self.get_component_policy_path(id);
-        match tokio::fs::remove_file(&policy_path).await {
-            Ok(()) => {
-                debug!(
-                    component_id = %id,
-                    path = %policy_path.display(),
-                    "Removed policy file"
-                );
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!(
-                    component_id = %id,
-                    path = %policy_path.display(),
-                    "Policy file already absent"
-                );
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to remove policy file at {}: {}",
-                    policy_path.display(),
-                    e
-                ));
-            }
-        }
+        self.remove_file_if_exists(&policy_path, "policy file", id)
+            .await?;
 
         let metadata_path = self.plugin_dir.join(format!("{id}.policy.meta.json"));
-        match tokio::fs::remove_file(&metadata_path).await {
-            Ok(()) => {
-                debug!(
-                    component_id = %id,
-                    path = %metadata_path.display(),
-                    "Removed policy metadata file"
-                );
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!(
-                    component_id = %id,
-                    path = %metadata_path.display(),
-                    "Policy metadata file already absent"
-                );
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to remove policy metadata file at {}: {}",
-                    metadata_path.display(),
-                    e
-                ));
-            }
-        }
+        self.remove_file_if_exists(&metadata_path, "policy metadata file", id)
+            .await?;
 
         info!(component_id = %id, "Component unloaded successfully");
         Ok(())
@@ -891,16 +862,14 @@ impl LifecycleManager {
             .remove(component_id);
 
         let policy_path = self.get_component_policy_path(component_id);
-        if policy_path.exists() {
-            tokio::fs::remove_file(&policy_path).await?;
-        }
+        self.remove_file_if_exists(&policy_path, "policy file", component_id)
+            .await?;
 
         let metadata_path = self
             .plugin_dir
             .join(format!("{component_id}.policy.meta.json"));
-        if metadata_path.exists() {
-            tokio::fs::remove_file(&metadata_path).await?;
-        }
+        self.remove_file_if_exists(&metadata_path, "policy metadata file", component_id)
+            .await?;
 
         info!(component_id, "Policy detached successfully");
         Ok(())
