@@ -212,7 +212,11 @@ async fn main() -> Result<()> {
 
             if use_stdio_transport {
                 registry
-                    .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .with_writer(std::io::stderr)
+                            .with_ansi(false),
+                    )
                     .init();
             } else {
                 registry.with(tracing_subscriber::fmt::layer()).init();
