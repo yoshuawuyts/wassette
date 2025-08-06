@@ -18,4 +18,4 @@ Please load the component from oci://ghcr.io/microsoft/eval-py:latest
 Please evaluate the python expression '2 + 2'
 ```
 
-The source code for this example can be found in [main.py](main.py).
+The source code for this example can be found in [`main.py`](main.py).
