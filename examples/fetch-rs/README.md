@@ -1,40 +1,26 @@
-# Fetch-rs Example
+# Fetch Example (Rust)
 
-This example demonstrates the use of the `wassette` runtime to interact with HTTP APIs as a WebAssembly (Wasm) component using Rust. It showcases how to define and enforce permissions for accessing network resources using a policy file.
+This example demonstrates how to fetch content from a URL using a Wassette component written in Rust.
 
-## Tools
+For more information on installing Wassette, please see the [installation instructions](https://github.com/microsoft/wassette?tab=readme-ov-file#installation).
 
-- **Fetch URL**: Fetches the contents of a specified URL using HTTP GET.
+## Usage
 
-## Setup
+To use this component, load it from the OCI registry and provide a URL to fetch.
 
-1. **Add MCP Server to VS Code**:
+**Load the component:**
 
-   - Open your `settings.json` file in VS Code.
-   - Add the MCP server configuration under the `mcp.servers` section. Example:
-     ```json
-     "mcp": {
-       "servers": {
-         "wassette": {
-           "type": "sse",
-           "url": "http://127.0.0.1:9001/sse"
-         }
-       }
-     }
-     ```
+```
+Please load the component from oci://ghcr.io/microsoft/fetch-rs:latest
+```
 
-2. **Start the MCP Server**:
+**Fetch content:**
 
-   - Use the `Justfile` to start the server with the appropriate policy file:
-     ```bash
-     just run-fetch-rs
-     ```
+```
+Please fetch the content of https://example.com
+```
 
-3. **Run a Fetch Tool**:
-
-   - Use the agent in VS Code to execute a fetch tool, such as `fetch_url`. Ensure the tool is configured to use the MCP server.
-
-## Policy File
+## Policy
 
 By default, WebAssembly (Wasm) components do not have any access to the host machine or network. The `policy.yaml` file is used to explicitly define what network resources are made available to the component. This ensures that the component can only access the resources that are explicitly allowed.
 
@@ -48,3 +34,5 @@ permissions:
     allow:
       - host: "https://rss.nytimes.com/"
 ```
+
+The source code for this example can be found in [`src/lib.rs`](src/lib.rs).
