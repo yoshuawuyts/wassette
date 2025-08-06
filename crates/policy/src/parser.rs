@@ -163,20 +163,21 @@ invalid: yaml: content
 
         let result = PolicyParser::parse_str(yaml_content);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().len() > 0);
+        assert!(!result.unwrap_err().to_string().is_empty());
     }
 
     #[test]
     fn test_round_trip_serialization() {
-        let mut permissions = Permissions::default();
-        permissions.storage = Some(PermissionList {
-            allow: Some(vec![StoragePermission {
-                uri: "fs://work/agent/**".to_string(),
-                access: vec![AccessType::Read, AccessType::Write],
-            }]),
-            deny: None,
-        });
-
+        let permissions = Permissions {
+            storage: Some(PermissionList {
+                allow: Some(vec![StoragePermission {
+                    uri: "fs://work/agent/**".to_string(),
+                    access: vec![AccessType::Read, AccessType::Write],
+                }]),
+                deny: None,
+            }),
+            ..Default::default()
+        };
         let original = PolicyDocument {
             version: "1.0".to_string(),
             description: Some("Test policy".to_string()),
@@ -493,8 +494,7 @@ permissions: {}
             let reparsed_policy = PolicyParser::parse_str(&yaml_string).unwrap();
             assert_eq!(
                 original_policy, reparsed_policy,
-                "Round trip failed for {}",
-                file_path
+                "Round trip failed for {file_path}",
             );
         }
     }
@@ -517,7 +517,7 @@ permissions: {}
         for file_path in &test_files {
             let policy = PolicyParser::parse_file(file_path).unwrap();
             policy.validate().unwrap_or_else(|e| {
-                panic!("Validation failed for {}: {}", file_path, e);
+                panic!("Validation failed for {file_path}: {e}");
             });
         }
     }
