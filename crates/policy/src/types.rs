@@ -315,41 +315,47 @@ mod tests {
 
     #[test]
     fn test_storage_permission_validation() {
-        let mut permissions = Permissions::default();
-        permissions.storage = Some(PermissionList {
-            allow: Some(vec![StoragePermission {
-                uri: "".to_string(),
-                access: vec![AccessType::Read],
-            }]),
-            deny: None,
-        });
+        let permissions = Permissions {
+            storage: Some(PermissionList {
+                allow: Some(vec![StoragePermission {
+                    uri: "".to_string(),
+                    access: vec![AccessType::Read],
+                }]),
+                deny: None,
+            }),
+            ..Default::default()
+        };
 
         assert!(permissions.validate().is_err());
     }
 
     #[test]
     fn test_network_cidr_validation() {
-        let mut permissions = Permissions::default();
-        permissions.network = Some(PermissionList {
-            allow: Some(vec![NetworkPermission::Cidr(NetworkCidrPermission {
-                cidr: "invalid-cidr".to_string(), // Invalid CIDR format
-            })]),
-            deny: None,
-        });
+        let permissions = Permissions {
+            network: Some(PermissionList {
+                allow: Some(vec![NetworkPermission::Cidr(NetworkCidrPermission {
+                    cidr: "invalid-cidr".to_string(), // Invalid CIDR format
+                })]),
+                deny: None,
+            }),
+            ..Default::default()
+        };
 
         assert!(permissions.validate().is_err());
     }
 
     #[test]
     fn test_valid_permissions() {
-        let mut permissions = Permissions::default();
-        permissions.storage = Some(PermissionList {
-            allow: Some(vec![StoragePermission {
-                uri: "fs://work/agent/**".to_string(),
-                access: vec![AccessType::Read, AccessType::Write],
-            }]),
-            deny: None,
-        });
+        let permissions = Permissions {
+            storage: Some(PermissionList {
+                allow: Some(vec![StoragePermission {
+                    uri: "fs://work/agent/**".to_string(),
+                    access: vec![AccessType::Read, AccessType::Write],
+                }]),
+                deny: None,
+            }),
+            ..Default::default()
+        };
 
         assert!(permissions.validate().is_ok());
     }
@@ -402,68 +408,69 @@ mod tests {
 
     #[test]
     fn test_comprehensive_wildcard_validation() {
-        let mut permissions = Permissions::default();
-
-        permissions.storage = Some(PermissionList {
-            allow: Some(vec![
-                StoragePermission {
-                    uri: "fs://work/agent/**".to_string(),
-                    access: vec![AccessType::Read, AccessType::Write],
-                },
-                StoragePermission {
-                    uri: "fs://work/*/temp".to_string(),
-                    access: vec![AccessType::Read],
-                },
-            ]),
-            deny: Some(vec![StoragePermission {
-                uri: "fs://work/agent/secret/*".to_string(),
-                access: vec![AccessType::Write],
-            }]),
-        });
-
-        permissions.network = Some(PermissionList {
-            allow: Some(vec![
-                NetworkPermission::Host(NetworkHostPermission {
-                    host: "*.example.com".to_string(),
-                }),
-                NetworkPermission::Host(NetworkHostPermission {
-                    host: "api.service.com".to_string(),
-                }),
-            ]),
-            deny: Some(vec![NetworkPermission::Host(NetworkHostPermission {
-                host: "*.malicious.com".to_string(),
-            })]),
-        });
-
-        // Test environment with valid keys (no wildcards allowed)
-        permissions.environment = Some(EnvironmentPermissions {
-            allow: Some(vec![
-                EnvironmentPermission {
-                    key: "PATH".to_string(),
-                },
-                EnvironmentPermission {
-                    key: "HOME".to_string(),
-                },
-                EnvironmentPermission {
-                    key: "MY_DEBUG_VAR".to_string(),
-                },
-            ]),
-        });
+        let permissions = Permissions {
+            storage: Some(PermissionList {
+                allow: Some(vec![
+                    StoragePermission {
+                        uri: "fs://work/agent/**".to_string(),
+                        access: vec![AccessType::Read, AccessType::Write],
+                    },
+                    StoragePermission {
+                        uri: "fs://work/*/temp".to_string(),
+                        access: vec![AccessType::Read],
+                    },
+                ]),
+                deny: Some(vec![StoragePermission {
+                    uri: "fs://work/agent/secret/*".to_string(),
+                    access: vec![AccessType::Write],
+                }]),
+            }),
+            network: Some(PermissionList {
+                allow: Some(vec![
+                    NetworkPermission::Host(NetworkHostPermission {
+                        host: "*.example.com".to_string(),
+                    }),
+                    NetworkPermission::Host(NetworkHostPermission {
+                        host: "api.service.com".to_string(),
+                    }),
+                ]),
+                deny: Some(vec![NetworkPermission::Host(NetworkHostPermission {
+                    host: "*.malicious.com".to_string(),
+                })]),
+            }),
+            // Test environment with valid keys (no wildcards allowed)
+            environment: Some(EnvironmentPermissions {
+                allow: Some(vec![
+                    EnvironmentPermission {
+                        key: "PATH".to_string(),
+                    },
+                    EnvironmentPermission {
+                        key: "HOME".to_string(),
+                    },
+                    EnvironmentPermission {
+                        key: "MY_DEBUG_VAR".to_string(),
+                    },
+                ]),
+            }),
+            ..Default::default()
+        };
 
         assert!(permissions.validate().is_ok());
     }
 
     #[test]
     fn test_invalid_wildcard_combinations() {
-        let mut permissions = Permissions::default();
+        let mut permissions = Permissions {
+            storage: Some(PermissionList {
+                allow: Some(vec![StoragePermission {
+                    uri: "fs://work/agent/**file".to_string(),
+                    access: vec![AccessType::Read],
+                }]),
+                deny: None,
+            }),
+            ..Default::default()
+        };
 
-        permissions.storage = Some(PermissionList {
-            allow: Some(vec![StoragePermission {
-                uri: "fs://work/agent/**file".to_string(),
-                access: vec![AccessType::Read],
-            }]),
-            deny: None,
-        });
         assert!(permissions.validate().is_err());
 
         permissions = Permissions::default();

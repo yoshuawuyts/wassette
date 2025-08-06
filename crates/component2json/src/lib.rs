@@ -1789,8 +1789,7 @@ mod tests {
         for tool_name in test_names {
             assert!(
                 validate_tool_name(tool_name).is_ok(),
-                "Tool name '{}' should be MCP compliant",
-                tool_name
+                "Tool name '{tool_name}' should be MCP compliant"
             );
         }
     }

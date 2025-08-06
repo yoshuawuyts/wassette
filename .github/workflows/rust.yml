@@ -35,6 +35,7 @@ jobs:
     - run: 
         # needed to run rustfmt in nightly toolchain
         rustup toolchain install nightly --component rustfmt
+    - uses: ./.github/actions/rust-cache
     - name: Run fmt
       run: cargo +nightly fmt --all -- --check
     - name: Run Clippy
@@ -49,6 +50,7 @@ jobs:
       shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1.13.0
     - run: rustup target add wasm32-wasip2
+    - uses: ./.github/actions/rust-cache
     - name: Build
       run: just build
     - name: Run tests
