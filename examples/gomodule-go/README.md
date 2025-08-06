@@ -1,10 +1,21 @@
-# gomodule Example
+# Go Module Example (Go)
 
-This example demonstrates the use of the `wassette` runtime to interact with the Go module server as a WebAssembly (Wasm) component. It showcases how to define and enforce permissions for accessing network resources and environment variables using a policy file.
+This example demonstrates how to get information about Go modules using a Wassette component written in Go.
 
-## Tools
+For more information on installing Wassette, please see the [installation instructions](https://github.com/microsoft/wassette?tab=readme-ov-file#installation).
 
-- **Get Latest Version**: Get the latest version of a Go module.
-- **Get Module Info**: Get detailed information about a Go module.
+## Usage
 
-![alt text](gomodule-info.png)
+To use this component, load it from the OCI registry and provide a Go module path.
+
+**Load the component:**
+```
+Please load the component from oci://ghcr.io/microsoft/gomodule-go:latest
+```
+
+**Get module information:**
+```
+get the latest versions for the go module urfave/cli
+```
+
+The source code for this example can be found in [`main.go`](main.go).
