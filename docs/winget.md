@@ -14,6 +14,13 @@ curl -o Microsoft.Wassette.yaml https://raw.githubusercontent.com/microsoft/wass
 winget install --manifest Microsoft.Wassette.yaml
 ```
 
+If the installation fails, it is probably because the local installation feature is not enabled.
+You can activate it with the following command in an administrator shell:
+
+```powershell
+winget settings --enable LocalManifestFiles
+```
+
 ## Verification
 
 After installation, verify that Wassette is available:
