@@ -8,7 +8,7 @@ Since WinGet doesn't support installing directly from URLs, you need to download
 
 ```powershell
 # Download the manifest
-curl -o Microsoft.Wassette.yaml https://raw.githubusercontent.com/microsoft/wassette/main/winget/Microsoft.Wassette.yaml
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/microsoft/wassette/main/winget/Microsoft.Wassette.yaml -OutFile Microsoft.Wassette.yaml
 
 # Install from the downloaded manifest
 winget install --manifest Microsoft.Wassette.yaml
