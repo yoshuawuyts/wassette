@@ -10,6 +10,7 @@
     flake-utils.url = "github:numtide/flake-utils";
     crane = {
       url = "github:ipetkov/crane";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
@@ -57,7 +58,7 @@
         wassette = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
           pname = "wassette";
-          version = "0.2.0";
+          version = (craneLib.crateNameFromCargoToml { inherit (commonArgs) src; }).version;
           doCheck = false; # Tests require building wasm components which needs additional setup
         });
 
@@ -78,22 +79,22 @@
             cargo-expand
             cargo-nextest
             cargo-component
-            
+
             # Wasm tools
             wasmtime
             wasm-tools
             wasm-pack
-            
+
             # Build tools
             just
             pkg-config
             openssl
-            
+
             # Development tools
             git
             curl
             jq
-            
+
             # Language support for examples
             python3
             nodejs_22
@@ -111,7 +112,7 @@
             echo "  just            - List available just recipes"
             echo ""
             echo "Rust toolchain: $(rustc --version)"
-            echo "Cargo component: $(cargo component --version 2>/dev/null || echo 'Run cargo install cargo-component')"
+            echo "Cargo component: $(cargo component --version 2>/dev/null || echo 'cargo-component is included in this dev shell (if this fails, check your environment)')"
             echo ""
           '';
 
