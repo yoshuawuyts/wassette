@@ -3,3 +3,7 @@ extend-exclude = [
     "**/*.wit",
     "**/*.wit.go",
 ]
+
+[default.extend-words]
+# Part of "Wassette" pronunciation guide
+Wass = "Wass"
