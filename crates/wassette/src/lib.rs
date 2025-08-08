@@ -319,7 +319,34 @@ impl DownloadedResource {
                     file.file_name()
                         .context("Path to copy is missing filename")?,
                 );
-                tokio::fs::rename(file, dest).await?;
+                match tokio::fs::rename(&file, &dest).await {
+                    Ok(()) => {}
+                    Err(e) if e.raw_os_error() == Some(18) => {
+                        // 18 == EXDEV on Unix-like systems (cross-device link).
+                        // Fallback to copy + remove.
+                        debug!(
+                            from = %file.display(),
+                            to = %dest.display(),
+                            "Cross-device rename detected; falling back to copy"
+                        );
+                        tokio::fs::copy(&file, &dest).await.with_context(|| {
+                            format!(
+                                "Failed to copy component from {} to {} during EXDEV fallback",
+                                file.display(),
+                                dest.display()
+                            )
+                        })?;
+                        if let Err(remove_err) = tokio::fs::remove_file(&file).await {
+                            warn!(
+                                path = %file.display(),
+                                error = %remove_err,
+                                "Failed to remove original temp file after copy"
+                            );
+                        }
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+                // Close & cleanup the tempdir (spawn_blocking to mirror previous behavior)
                 tokio::task::spawn_blocking(move || tempdir.close())
                     .await?
                     .context("Failed to clean up temporary download file")?;
