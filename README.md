@@ -139,3 +139,11 @@ This project may contain trademarks or logos for projects, products, or services
 [Contributing]: CONTRIBUTING.md
 [Releases]: https://github.com/microsoft/wassette/releases
 [Discord]: https://discord.gg/microsoft-open-source
+
+## Contributors
+
+Thanks to all contributors who are helping shape Wassette into something great.
+
+<a href="https://github.com/microsoft/wassette/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=microsoft/wassette" />
+</a>
