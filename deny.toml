@@ -1,0 +1,40 @@
+# Cargo-deny configuration for wassette
+# Documentation: https://embarkstudios.github.io/cargo-deny/
+
+# Advisory database configuration
+[advisories]
+# Ignore list for known issues that are acceptable
+ignore = [
+    # paste crate is unmaintained but still widely used and safe
+    { id = "RUSTSEC-2024-0436", reason = "paste crate is unmaintained but still widely used and safe" },
+]
+
+# License checking configuration
+[licenses]
+# Explicitly allowed licenses - OSI approved and commonly used licenses
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause", 
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+# Dependency bans configuration
+[bans]
+# Allow multiple versions with warnings (common in large dependency graphs)
+multiple-versions = "warn"
+# Allow wildcard version requirements
+wildcards = "allow"
+
+# Source checking configuration  
+[sources]
+# Only allow crates from crates.io
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+unknown-registry = "deny"
+unknown-git = "deny"
