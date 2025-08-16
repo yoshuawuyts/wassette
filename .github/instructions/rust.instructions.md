@@ -23,6 +23,44 @@ View the design/architecture.md for a high-level overview of the architecture an
 - Use stdlib primitives like `Arc` and `Mutex` for thread safety and shared state.
 - Choose appropriate data types like `&str` over `String` for performance and memory efficiency.
 
+## Copyright Headers
+
+All Rust files (`.rs`) in this project must include the Microsoft copyright header at the top of the file. This is a strict requirement for all source code files.
+
+### Required Format
+
+```rust
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+```
+
+The copyright header should be placed at the very beginning of the file, followed by a blank line before any other content (crate-level documentation, imports, etc.).
+
+### Automated Application
+
+The repository includes an automated script to add copyright headers to all relevant files:
+
+```bash
+# Run the copyright script to add headers to all Rust files
+./scripts/copyright.sh
+```
+
+This script is idempotent - it will not add duplicate headers if they already exist, making it safe to run multiple times.
+
+### Manual Verification
+
+You can verify that a file has the correct copyright header by checking that it starts with:
+```bash
+grep -q "Copyright (c) Microsoft Corporation" your_file.rs
+```
+
+### Important Notes
+
+- The copyright header is mandatory for all new Rust files
+- The format must match exactly as shown above
+- Headers should be applied before committing new files
+- The automated script handles proper formatting and placement
+
 ## Debugging
 
 
