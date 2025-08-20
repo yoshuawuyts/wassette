@@ -1,9 +1,13 @@
 package local:time-server;
 
 interface time {
+    /// Get the current date and time as a formatted string
+    /// Returns the current timestamp in ISO 8601 format
     get-current-time: func() -> string;
 }
 
+/// A world that exports time server functionality
+/// This component provides access to current system time information
 world time-server {
     export time;
 } 

@@ -1,6 +1,26 @@
 package local:eval-py;
 
+/// A sandboxed Python execution environment
 world sandbox {
+    /// Evaluate a Python expression and return its result
+    /// 
+    /// # Parameters
+    /// * `expression` - A Python expression to evaluate (e.g., "2 + 2", "len('hello')")
+    /// 
+    /// # Returns
+    /// A result containing either:
+    /// * Success: String representation of the expression's result
+    /// * Error: String describing the evaluation error (syntax error, runtime error, etc.)
     export eval: func(expression: string) -> result<string, string>;
+    
+    /// Execute Python statements and return any output
+    /// 
+    /// # Parameters  
+    /// * `statements` - Python statements to execute (e.g., "print('hello')", "x = 5; print(x)")
+    /// 
+    /// # Returns
+    /// A result containing either:
+    /// * Success: String containing any printed output or execution results
+    /// * Error: String describing the execution error (syntax error, runtime error, etc.)
     export exec: func(statements: string) -> result<string, string>;
 } 

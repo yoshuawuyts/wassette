@@ -1,6 +1,9 @@
 package mossaka:mcp@0.1.0;
 
+/// Weather information services
 world weather-mcp {
     import wasi:config/store@0.2.0-draft;
+    
+    /// Get current weather information for a specified city
     export get-weather: func(city: string) -> result<string, string>;
 }
