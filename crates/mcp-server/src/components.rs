@@ -121,7 +121,8 @@ pub(crate) async fn handle_component_call(
             let contents = vec![Content::text(result_str)];
 
             Ok(CallToolResult {
-                content: contents,
+                content: Some(contents),
+                structured_content: None,
                 is_error: None,
             })
         }
@@ -175,7 +176,8 @@ pub async fn handle_list_components(
     let contents = vec![Content::text(result_text)];
 
     Ok(CallToolResult {
-        content: contents,
+        content: Some(contents),
+        structured_content: None,
         is_error: None,
     })
 }
@@ -210,7 +212,8 @@ fn create_component_success_result(
     let contents = vec![Content::text(status_text)];
 
     Ok(CallToolResult {
-        content: contents,
+        content: Some(contents),
+        structured_content: None,
         is_error: None,
     })
 }
@@ -233,7 +236,8 @@ fn create_component_error_result(
     let contents = vec![Content::text(error_text)];
 
     CallToolResult {
-        content: contents,
+        content: Some(contents),
+        structured_content: None,
         is_error: Some(true),
     }
 }
@@ -328,12 +332,40 @@ fn parse_tool_schema(tool_json: &Value) -> Option<Tool> {
 
     let input_schema = tool_json.get("inputSchema").cloned().unwrap_or(json!({}));
 
-    debug!(tool_name = %name, "Parsed tool schema");
+    // Extract outputSchema if present for MCP structured output support
+    let output_schema = tool_json.get("outputSchema");
+
+    let output_schema_arc = if let Some(schema) = output_schema {
+        if schema.is_null() {
+            None
+        } else {
+            // Convert Value to Map<String, Value> as expected by rmcp 0.5.0
+            match schema {
+                Value::Object(map) => Some(Arc::new(map.clone())),
+                _ => {
+                    // If it's not an object, we need to wrap it in a map structure
+                    // This preserves the schema structure while making it compatible
+                    let mut wrapper = serde_json::Map::new();
+                    wrapper.insert("schema".to_string(), schema.clone());
+                    Some(Arc::new(wrapper))
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    debug!(
+        tool_name = %name,
+        has_output_schema = output_schema_arc.is_some(),
+        "Parsed tool schema"
+    );
 
     Some(Tool {
         name: Cow::Owned(name.to_string()),
         description: Some(Cow::Owned(description.to_string())),
         input_schema: Arc::new(serde_json::from_value(input_schema).unwrap_or_default()),
+        output_schema: output_schema_arc,
         annotations: None,
     })
 }
@@ -361,6 +393,8 @@ mod tests {
 
         assert_eq!(tool.name, "test-tool");
         assert_eq!(tool.description, Some("Test tool description".into()));
+        // Verify that output_schema is None when not provided
+        assert!(tool.output_schema.is_none());
 
         let schema_json = serde_json::to_value(&*tool.input_schema).unwrap();
         let expected = json!({
@@ -420,5 +454,143 @@ mod tests {
 
         assert_eq!(tool.name, "<unnamed>");
         assert_eq!(tool.description, Some("Test description".into()));
+    }
+
+    #[test]
+    fn test_parse_tool_schema_with_output_schema() {
+        let tool_json = json!({
+            "name": "weather-tool",
+            "description": "Get weather data",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"}
+                },
+                "required": ["location"]
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "temperature": {"type": "number"},
+                    "conditions": {"type": "string"}
+                },
+                "required": ["temperature", "conditions"]
+            }
+        });
+
+        let tool = parse_tool_schema(&tool_json).unwrap();
+
+        assert_eq!(tool.name, "weather-tool");
+        // Verify that the description is now the original description (no enhancement needed)
+        assert_eq!(tool.description.as_ref().unwrap(), "Get weather data");
+
+        // Verify that output_schema is correctly set
+        assert!(tool.output_schema.is_some());
+        let output_schema_json =
+            serde_json::to_value(&**tool.output_schema.as_ref().unwrap()).unwrap();
+        let expected_output = json!({
+            "type": "object",
+            "properties": {
+                "temperature": {"type": "number"},
+                "conditions": {"type": "string"}
+            },
+            "required": ["temperature", "conditions"]
+        });
+        assert_eq!(output_schema_json, expected_output);
+
+        let schema_json = serde_json::to_value(&*tool.input_schema).unwrap();
+        let expected_input = json!({
+            "type": "object",
+            "properties": {
+                "location": {"type": "string"}
+            },
+            "required": ["location"]
+        });
+        assert_eq!(schema_json, expected_input);
+    }
+
+    #[test]
+    fn test_parse_tool_schema_integration_with_component2json() {
+        // This test uses the same structure that component2json generates
+        // to verify the integration works properly
+        let component_generated_tool = json!({
+            "name": "fetch",
+            "description": "Auto-generated schema for function 'fetch'",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string"
+                    }
+                },
+                "required": ["url"]
+            },
+            "outputSchema": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "ok": {
+                                "type": "string"
+                            }
+                        },
+                        "required": ["ok"]
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "err": {
+                                "type": "string"
+                            }
+                        },
+                        "required": ["err"]
+                    }
+                ]
+            }
+        });
+
+        let tool = parse_tool_schema(&component_generated_tool).unwrap();
+
+        assert_eq!(tool.name, "fetch");
+        // Verify that the description is now the original description (no enhancement needed)
+        assert_eq!(
+            tool.description.as_ref().unwrap(),
+            "Auto-generated schema for function 'fetch'"
+        );
+
+        // Verify that output_schema is correctly set
+        assert!(tool.output_schema.is_some());
+        let output_schema_json =
+            serde_json::to_value(&**tool.output_schema.as_ref().unwrap()).unwrap();
+        let expected_output = json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "ok": {"type": "string"}
+                    },
+                    "required": ["ok"]
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "err": {"type": "string"}
+                    },
+                    "required": ["err"]
+                }
+            ]
+        });
+        assert_eq!(output_schema_json, expected_output);
+
+        // Verify input schema is correctly parsed
+        let input_schema_json = serde_json::to_value(&*tool.input_schema).unwrap();
+        let expected_input = json!({
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"}
+            },
+            "required": ["url"]
+        });
+        assert_eq!(input_schema_json, expected_input);
     }
 }
