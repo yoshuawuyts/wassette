@@ -37,13 +37,16 @@ jobs:
       shell: bash
     - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1.13.0
     - run: rustup target add wasm32-wasip2
+
     - name: Build
       run: just build-examples
+
     - name: Upload wasm
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: examples
         path: bin
+
   publish:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
@@ -73,12 +76,18 @@ jobs:
         with:
           name: examples
           path: bin
+
       - name: Log in to Container Registry
         uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        with:
+          cosign-release: 'v2.4.1'
+
       - name: Determine tag
         id: meta
         run: |
@@ -95,15 +104,26 @@ jobs:
             echo "latest=false" >> $GITHUB_OUTPUT
           fi
       - name: Publish ${{ matrix.component.name }}
+        id: publish_versioned
         uses: bytecodealliance/wkg-github-action@10b3b04b9059ba46208cd7daf7d352af14bded0f # v5
         with:
           file: bin/${{ matrix.component.file }}
           oci-reference-without-tag: ghcr.io/${{ github.repository_owner }}/${{ matrix.component.name }}
           version: ${{ steps.meta.outputs.tag }}
+      - name: Sign container image ${{ matrix.component.name }}:${{ steps.meta.outputs.tag }}
+        run: |
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/${{ matrix.component.name }}@${{ steps.publish_versioned.outputs.digest }}
+
       - name: Publish ${{ matrix.component.name }} with tag ${{ steps.meta.outputs.release_tag || 'latest' }} (if specified)
+        id: publish_latest
         uses: bytecodealliance/wkg-github-action@10b3b04b9059ba46208cd7daf7d352af14bded0f # v5
         if: steps.meta.outputs.latest == 'true'
         with:
           file: bin/${{ matrix.component.file }}
           oci-reference-without-tag: ghcr.io/${{ github.repository_owner }}/${{ matrix.component.name }}
           version: ${{ steps.meta.outputs.release_tag || 'latest' }}
+      - name: Sign container image ${{ matrix.component.name }}:${{ steps.meta.outputs.release_tag || 'latest' }}
+        if: steps.meta.outputs.latest == 'true'
+        run: |
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/${{ matrix.component.name }}@${{ steps.publish_latest.outputs.digest }}
+
