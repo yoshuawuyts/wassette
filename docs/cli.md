@@ -263,6 +263,18 @@ wassette permission grant environment-variable my-component HOME
 wassette permission grant environment-variable my-component PATH
 ```
 
+**Memory permissions:**
+```bash
+# Grant memory limit to a component (using Kubernetes format)
+wassette permission grant memory my-component 512Mi
+
+# Grant larger memory limit
+wassette permission grant memory my-component 1Gi
+
+# Grant memory limit with different units
+wassette permission grant memory my-component 2048Ki
+```
+
 **Options:**
 - `--access <ACCESS>`: For storage permissions, comma-separated list of access types (read, write)
 - `--plugin-dir <PATH>`: Component storage directory
@@ -324,6 +336,7 @@ wassette component list --output-format table
 # 3. Grant necessary permissions
 wassette permission grant storage my-tool fs://$(pwd)/workspace --access read,write
 wassette permission grant network my-tool api.example.com
+wassette permission grant memory my-tool 512Mi
 
 # 4. Verify permissions
 wassette policy get my-tool --output-format yaml
@@ -341,6 +354,7 @@ wassette component load oci://ghcr.io/myorg/my-tool:v1.0.0
 # 2. Configure permissions based on component needs
 wassette permission grant storage my-tool fs://workspace/** --access read,write
 wassette permission grant network my-tool api.myservice.com
+wassette permission grant memory my-tool 1Gi
 
 # 3. Start server for clients
 wassette serve --sse

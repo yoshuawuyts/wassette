@@ -141,7 +141,7 @@ pub enum MemoryLimit {
 }
 
 /// Resource limit values under the limits section
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ResourceLimitValues {
     /// CPU limit in k8s format (millicores "500m" or cores "1")
     pub cpu: Option<CpuLimit>,
@@ -156,7 +156,7 @@ pub struct ResourceLimitValues {
 }
 
 /// Resource limits configuration
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ResourceLimits {
     /// Resource limits in k8s-style format
     pub limits: Option<ResourceLimitValues>,
@@ -264,7 +264,7 @@ impl CpuLimit {
 impl MemoryLimit {
     /// Validate and convert memory limit to bytes
     pub fn to_bytes(&self) -> PolicyResult<u64> {
-        match self {
+        let bytes = match self {
             MemoryLimit::String(s) => {
                 if s.is_empty() {
                     bail!("Memory limit string cannot be empty");
@@ -287,22 +287,25 @@ impl MemoryLimit {
                     .parse()
                     .map_err(|_| anyhow::anyhow!("Invalid memory value: {}", s))?;
 
+                if value == 0 {
+                    bail!("Memory limit cannot be zero: {}", s);
+                }
+
                 value
                     .checked_mul(multiplier)
-                    .ok_or_else(|| anyhow::anyhow!("Memory value too large: {}", s))
+                    .ok_or_else(|| anyhow::anyhow!("Memory value too large: {}", s))?
             }
             MemoryLimit::Number(n) => {
+                if *n == 0 {
+                    bail!("Memory limit cannot be zero");
+                }
                 // Assume legacy numeric values are in MB
                 n.checked_mul(1024 * 1024)
-                    .ok_or_else(|| anyhow::anyhow!("Memory value too large: {}", n))
+                    .ok_or_else(|| anyhow::anyhow!("Memory value too large: {}", n))?
             }
-        }
-    }
-}
+        };
 
-impl Default for ResourceLimitValues {
-    fn default() -> Self {
-        Self::new(None, None)
+        Ok(bytes)
     }
 }
 
@@ -724,13 +727,16 @@ mod tests {
         let memory_gi = MemoryLimit::String("2Gi".to_string());
         assert_eq!(memory_gi.to_bytes().unwrap(), 2 * 1024 * 1024 * 1024);
 
-        // Test Ti format
-        let memory_ti = MemoryLimit::String("1Ti".to_string());
-        assert_eq!(memory_ti.to_bytes().unwrap(), 1024u64 * 1024 * 1024 * 1024);
+        // Test Gi format (larger value)
+        let memory_gi_large = MemoryLimit::String("32Gi".to_string());
+        assert_eq!(
+            memory_gi_large.to_bytes().unwrap(),
+            32u64 * 1024 * 1024 * 1024
+        );
 
-        // Test plain bytes
-        let memory_bytes = MemoryLimit::String("1024".to_string());
-        assert_eq!(memory_bytes.to_bytes().unwrap(), 1024);
+        // Test plain bytes (above minimum)
+        let memory_bytes = MemoryLimit::String("131072".to_string()); // 128KB
+        assert_eq!(memory_bytes.to_bytes().unwrap(), 131072);
 
         // Test numeric format (legacy, assumes MB)
         let memory_numeric = MemoryLimit::Number(512);

@@ -35,7 +35,9 @@ use loader::{ComponentResource, PolicyResource};
 use policy_internal::PolicyRegistry;
 pub use policy_internal::{PermissionGrantRequest, PermissionRule, PolicyInfo};
 use wasistate::WasiState;
-pub use wasistate::{create_wasi_state_template_from_policy, WasiStateTemplate};
+pub use wasistate::{
+    create_wasi_state_template_from_policy, CustomResourceLimiter, WasiStateTemplate,
+};
 
 const DOWNLOADS_DIR: &str = "downloads";
 
@@ -313,10 +315,7 @@ impl LifecycleManager {
 
         let component = Component::new(&self.engine, wasm_bytes).map_err(|e| anyhow::anyhow!("Failed to compile component from path: {}. Error: {}. Please ensure the file is a valid WebAssembly component.", downloaded_resource.as_ref().display(), e))?;
         // Pre-instantiate the component
-        let instance_pre = self
-            .linker
-            .instantiate_pre(&component)
-            .context("failed to instantiate component")?;
+        let instance_pre = self.linker.instantiate_pre(&component)?;
         let id = downloaded_resource.id()?;
         let tool_metadata = component_exports_to_tools(&component, &self.engine, true);
 
@@ -477,7 +476,7 @@ impl LifecycleManager {
     async fn get_wasi_state_for_component(
         &self,
         component_id: &str,
-    ) -> Result<WassetteWasiState<WasiState>> {
+    ) -> Result<(WassetteWasiState<WasiState>, Option<CustomResourceLimiter>)> {
         let policy_registry = self.policy_registry.read().await;
 
         let policy_template = policy_registry
@@ -488,8 +487,10 @@ impl LifecycleManager {
 
         let wasi_state = policy_template.build()?;
         let allowed_hosts = policy_template.allowed_hosts.clone();
+        let resource_limiter = wasi_state.resource_limiter.clone();
 
-        WassetteWasiState::new(wasi_state, allowed_hosts)
+        let wassette_wasi_state = WassetteWasiState::new(wasi_state, allowed_hosts)?;
+        Ok((wassette_wasi_state, resource_limiter))
     }
 
     /// Executes a function call on a WebAssembly component
@@ -505,15 +506,24 @@ impl LifecycleManager {
             .await
             .ok_or_else(|| anyhow!("Component not found: {}", component_id))?;
 
-        let state = self.get_wasi_state_for_component(component_id).await?;
+        let (state, resource_limiter) = self.get_wasi_state_for_component(component_id).await?;
 
         let mut store = Store::new(self.engine.as_ref(), state);
 
-        let instance = component
-            .instance_pre
-            .instantiate_async(&mut store)
-            .await
-            .context("Failed to instantiate component")?;
+        // Apply memory limits if configured in the policy by setting up a limiter closure
+        // that extracts the resource limiter from the WasiState
+        if resource_limiter.is_some() {
+            store.limiter(|state: &mut WassetteWasiState<WasiState>| {
+                // Extract the resource limiter from the inner state
+                state
+                    .inner
+                    .resource_limiter
+                    .as_mut()
+                    .expect("Resource limiter should be present - checked above")
+            });
+        }
+
+        let instance = component.instance_pre.instantiate_async(&mut store).await?;
 
         // Use the new function identifier lookup instead of dot-splitting
         let function_id = self
@@ -693,9 +703,7 @@ async fn load_component_from_entry(
         .map(String::from)
         .context("wasm file didn't have a valid file name")?;
     info!(component_id = %name, elapsed = ?start_time.elapsed(), "component loaded");
-    let instance_pre = linker
-        .instantiate_pre(&component)
-        .context("failed to instantiate component")?;
+    let instance_pre = linker.instantiate_pre(&component)?;
     Ok(Some((
         ComponentInstance {
             component: Arc::new(component),

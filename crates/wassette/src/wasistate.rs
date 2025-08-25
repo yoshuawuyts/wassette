@@ -9,11 +9,45 @@ use wasmtime_wasi::p2::WasiCtxBuilder;
 use wasmtime_wasi_config::WasiConfigVariables;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
+/// Custom resource limiter that stores the limits
+#[derive(Clone)]
+pub struct CustomResourceLimiter {
+    limits: wasmtime::StoreLimits,
+}
+
+impl CustomResourceLimiter {
+    /// Create a new CustomResourceLimiter with the given limits
+    pub fn new(limits: wasmtime::StoreLimits) -> Self {
+        Self { limits }
+    }
+}
+
+impl wasmtime::ResourceLimiter for CustomResourceLimiter {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> anyhow::Result<bool> {
+        self.limits.memory_growing(current, desired, _maximum)
+    }
+
+    fn table_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> anyhow::Result<bool> {
+        self.limits.table_growing(current, desired, _maximum)
+    }
+}
+
 pub struct WasiState {
     pub ctx: wasmtime_wasi::p2::WasiCtx,
     pub table: wasmtime_wasi::ResourceTable,
     pub http: wasmtime_wasi_http::WasiHttpCtx,
     pub wasi_config_vars: WasiConfigVariables,
+    pub resource_limiter: Option<CustomResourceLimiter>,
 }
 
 impl wasmtime_wasi::p2::IoView for WasiState {
@@ -73,6 +107,10 @@ impl WasiStateTemplate {
             table: wasmtime_wasi::ResourceTable::default(),
             http: WasiHttpCtx::new(),
             wasi_config_vars: WasiConfigVariables::from_iter(self.config_vars.clone()),
+            resource_limiter: self
+                .store_limits
+                .as_ref()
+                .map(|limits| CustomResourceLimiter::new(limits.clone())),
         })
     }
 }
@@ -112,6 +150,10 @@ pub struct WasiStateTemplate {
     pub preopened_dirs: Vec<PreopenedDir>,
     /// Allowed network hosts for HTTP requests
     pub allowed_hosts: HashSet<String>,
+    /// Memory limit in bytes for the component
+    pub memory_limit: Option<u64>,
+    /// Store limits for wasmtime (built from memory_limit)
+    pub store_limits: Option<wasmtime::StoreLimits>,
 }
 
 impl Default for WasiStateTemplate {
@@ -124,6 +166,8 @@ impl Default for WasiStateTemplate {
             config_vars: HashMap::new(),
             preopened_dirs: Vec::new(),
             allowed_hosts: HashSet::new(),
+            memory_limit: None,
+            store_limits: None,
         }
     }
 }
@@ -138,12 +182,25 @@ pub fn create_wasi_state_template_from_policy(
     let network_perms = extract_network_perms(policy);
     let preopened_dirs = extract_storage_permissions(policy, plugin_dir)?;
     let allowed_hosts = extract_allowed_hosts(policy);
+    let memory_limit = extract_memory_limit(policy)?;
+    let store_limits = memory_limit
+        .map(|limit| -> anyhow::Result<wasmtime::StoreLimits> {
+            let limit_usize = limit.try_into().map_err(|_| {
+                anyhow::anyhow!("Memory limit {} too large for target architecture", limit)
+            })?;
+            Ok(wasmtime::StoreLimitsBuilder::new()
+                .memory_size(limit_usize)
+                .build())
+        })
+        .transpose()?;
 
     Ok(WasiStateTemplate {
         network_perms,
         config_vars: env_vars,
         preopened_dirs,
         allowed_hosts,
+        memory_limit,
+        store_limits,
         ..Default::default()
     })
 }
@@ -250,6 +307,26 @@ pub(crate) fn calculate_permissions(
         });
 
     (file_perms, dir_perms)
+}
+
+/// Extract memory limit from the policy document
+pub(crate) fn extract_memory_limit(policy: &PolicyDocument) -> anyhow::Result<Option<u64>> {
+    if let Some(resources) = &policy.permissions.resources {
+        // Check the new k8s-style limits first
+        if let Some(limits) = &resources.limits {
+            if let Some(memory_limit) = &limits.memory {
+                return Ok(Some(memory_limit.to_bytes()?));
+            }
+        }
+
+        // Fall back to legacy memory field for backward compatibility
+        if let Some(legacy_memory) = resources.memory {
+            // Legacy numeric values are assumed to be in MB
+            return Ok(Some(legacy_memory * 1024 * 1024));
+        }
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -607,6 +684,96 @@ permissions:
         assert!(template.allow_stdout);
         assert!(template.allow_stderr);
         assert!(template.allow_args);
+        assert_eq!(template.memory_limit, None);
+    }
+
+    #[test]
+    fn test_extract_memory_limit() {
+        // Test with k8s-style memory limit
+        let yaml_content = r#"
+version: "1.0"
+description: "Policy with memory limit"
+permissions:
+  resources:
+    limits:
+      memory: "512Mi"
+"#;
+        let policy = PolicyParser::parse_str(yaml_content).unwrap();
+        let memory_limit = extract_memory_limit(&policy).unwrap();
+        assert_eq!(memory_limit, Some(512 * 1024 * 1024));
+
+        // Test with legacy memory limit
+        let yaml_content_legacy = r#"
+version: "1.0"
+description: "Policy with legacy memory limit"
+permissions:
+  resources:
+    memory: 256
+"#;
+        let policy_legacy = PolicyParser::parse_str(yaml_content_legacy).unwrap();
+        let memory_limit_legacy = extract_memory_limit(&policy_legacy).unwrap();
+        assert_eq!(memory_limit_legacy, Some(256 * 1024 * 1024));
+
+        // Test with no memory limit
+        let policy_no_mem = create_zero_permission_policy();
+        let memory_limit_none = extract_memory_limit(&policy_no_mem).unwrap();
+        assert_eq!(memory_limit_none, None);
+    }
+
+    #[test]
+    fn test_create_wasi_state_template_with_memory_limit() {
+        let temp_dir = TempDir::new().unwrap();
+        let plugin_dir = temp_dir.path();
+
+        let yaml_content = r#"
+version: "1.0"
+description: "Policy with memory limit"
+permissions:
+  resources:
+    limits:
+      memory: "512Mi"
+"#;
+        let policy = PolicyParser::parse_str(yaml_content).unwrap();
+        let env_vars = HashMap::new(); // Empty environment for test
+        let template =
+            create_wasi_state_template_from_policy(&policy, plugin_dir, &env_vars).unwrap();
+
+        assert_eq!(template.memory_limit, Some(512 * 1024 * 1024));
+        assert!(template.store_limits.is_some());
+    }
+
+    #[test]
+    fn test_memory_resource_end_to_end() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new().unwrap();
+        let plugin_dir = temp_dir.path();
+
+        // Create a policy with memory resource through policy parsing
+        let yaml_content = r#"
+version: "1.0"
+description: "Test policy with memory resource"
+permissions:
+  resources:
+    limits:
+      memory: "1Gi"
+"#;
+        let policy = PolicyParser::parse_str(yaml_content).unwrap();
+
+        // Test that memory limit is extracted correctly
+        let memory_limit = extract_memory_limit(&policy).unwrap();
+        assert_eq!(memory_limit, Some(1024 * 1024 * 1024)); // 1 GiB in bytes
+
+        // Test that WASI state template is created with memory limit
+        let env_vars = HashMap::new(); // Empty environment for test
+        let template =
+            create_wasi_state_template_from_policy(&policy, plugin_dir, &env_vars).unwrap();
+        assert_eq!(template.memory_limit, Some(1024 * 1024 * 1024));
+        assert!(template.store_limits.is_some());
+
+        // Test that WASI state can be built with resource limiter
+        let wasi_state = template.build().unwrap();
+        assert!(wasi_state.resource_limiter.is_some());
+
+        Ok(())
     }
 
     proptest! {

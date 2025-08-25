@@ -33,9 +33,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - `wassette permission grant storage <component_id> <uri> --access read,write` - Grant storage permissions
   - `wassette permission grant network <component_id> <host>` - Grant network permissions  
   - `wassette permission grant environment-variable <component_id> <key>` - Grant environment variable permissions
+  - `wassette permission grant memory <component_id> <limit>` - Grant memory resource permissions
   - `wassette permission revoke storage <component_id> <uri>` - Revoke storage permissions
   - `wassette permission revoke network <component_id> <host>` - Revoke network permissions
   - `wassette permission revoke environment-variable <component_id> <key>` - Revoke environment variable permissions
+  - `wassette permission revoke resource <component_id> --memory` - Revoke memory resource permissions
   - `wassette permission reset <component_id>` - Reset all permissions for a component
 - **Output Formatting**: Added support for multiple output formats (JSON, YAML, table) using `--output-format` flag
 - **CLI Documentation**: Comprehensive CLI reference documentation in `docs/cli.md`
@@ -47,6 +49,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **BREAKING CHANGE**: Upgraded rmcp dependency from v0.2 to v0.5.0 to enable native structured output support ([#181](https://github.com/microsoft/wassette/pull/181))
 - Copyright header instructions to Rust development guidelines ([#TBD](https://github.com/microsoft/wassette/pull/TBD))
 - Enhanced environment variable CLI experience with `--env` and `--env-file` options for better configuration management
+- Memory resource granting functionality for components with k8s-style memory limits ([#171](https://github.com/microsoft/wassette/pull/171))
+- Memory resource revocation functionality allowing removal of memory limits from component policies ([#171](https://github.com/microsoft/wassette/pull/171))
 - Comprehensive Go development guide for authoring Wasm components ([#163](https://github.com/microsoft/wassette/pull/163))
 - Comprehensive documentation for authoring Wasm Components with Python ([#161](https://github.com/microsoft/wassette/pull/161))
 - Detailed documentation for authoring WebAssembly Components from JavaScript/TypeScript ([#159](https://github.com/microsoft/wassette/pull/159))
@@ -69,6 +73,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Spell check, link checker, and unused dependency checker to CI workflow ([#116](https://github.com/microsoft/wassette/pull/116))
 - Kubernetes-style resource limits in policy specification with `resources.limits` section supporting CPU ("500m", "1") and memory ("512Mi", "1Gi") formats ([#166](https://github.com/microsoft/wassette/pull/166))
 
+### Fixed
+- Memory resource limiter implementation by properly applying limits to Wasmtime store using the correct `limiter()` API ([#171](https://github.com/microsoft/wassette/pull/171))
+
 ### Changed
 - CLI now supports both server mode (`wassette serve`) and direct management mode for component operations
 - Component load/unload operations can now work independently without requiring a running MCP server
@@ -84,6 +91,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - Add cargo audit configuration to acknowledge unmaintained `paste` dependency warning ([#169](https://github.com/microsoft/wassette/pull/169))
+- Memory resource limits now properly applied to component execution using Wasmtime's ResourceLimiter ([#171](https://github.com/microsoft/wassette/pull/171))
 - Component loading across different filesystems (EXDEV error handling) ([#109](https://github.com/microsoft/wassette/pull/109))
 - Component names in README files for consistency ([#115](https://github.com/microsoft/wassette/pull/115))
 - Installation instructions for Linux and Windows in README ([#120](https://github.com/microsoft/wassette/pull/120))

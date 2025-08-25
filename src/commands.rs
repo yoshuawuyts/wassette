@@ -181,6 +181,16 @@ pub enum GrantPermissionCommands {
         #[arg(long)]
         plugin_dir: Option<PathBuf>,
     },
+    /// Grant memory permission to a component.
+    Memory {
+        /// Component ID to grant permission to
+        component_id: String,
+        /// Memory limit (e.g., 512Mi, 1Gi, 2048Ki)
+        limit: String,
+        /// Directory where plugins are stored. Defaults to $XDG_DATA_HOME/wassette/components
+        #[arg(long)]
+        plugin_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
