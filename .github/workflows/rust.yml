@@ -110,6 +110,63 @@ jobs:
     - name: Run cargo deny check
       run: cargo deny check advisories licenses bans sources
 
+  coverage:
+    name: test coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+    - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+    - run: ./scripts/install-protobuf.sh
+      shell: bash
+    - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1.13.0
+      with:
+        toolchain: nightly
+        components: llvm-tools-preview
+    - run: rustup target add wasm32-wasip2
+    - uses: ./.github/actions/rust-cache
+    - name: Install cargo-llvm-cov
+      run: cargo install cargo-llvm-cov
+    - name: Generate coverage report
+      run: |
+        cargo llvm-cov --all-features --workspace --ignore-run-fail --lcov --output-path lcov.info
+        cargo llvm-cov --all-features --workspace --ignore-run-fail --json --output-path coverage.json
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@4fe8c5f003fae66aa5ebb77cfd3e7bfbbda0b6b0 # v6.1.0
+      with:
+        file: ./lcov.info
+        fail_ci_if_error: false
+    - name: Coverage comment on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.1.0
+      with:
+        script: |
+          const fs = require('fs');
+          const coverage = JSON.parse(fs.readFileSync('coverage.json', 'utf8'));
+          const totalLines = coverage.data[0].totals.lines.count;
+          const coveredLines = coverage.data[0].totals.lines.covered;
+          const coveragePercent = ((coveredLines / totalLines) * 100).toFixed(2);
+          
+          const comment = `## 📊 Test Coverage Report
+          
+          **Overall Coverage: ${coveragePercent}%** (${coveredLines}/${totalLines} lines)`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+    - name: Upload coverage artifacts  
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: coverage-report
+        path: |
+          lcov.info
+          coverage.json
+
   spelling:
     name: spell check with typos
     runs-on: ubuntu-latest
