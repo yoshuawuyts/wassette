@@ -319,7 +319,7 @@ pub async fn handle_unload_component_cli(
 }
 
 #[instrument]
-fn parse_tool_schema(tool_json: &Value) -> Option<Tool> {
+pub(crate) fn parse_tool_schema(tool_json: &Value) -> Option<Tool> {
     let name = tool_json
         .get("name")
         .and_then(|v| v.as_str())
@@ -333,21 +333,35 @@ fn parse_tool_schema(tool_json: &Value) -> Option<Tool> {
     let input_schema = tool_json.get("inputSchema").cloned().unwrap_or(json!({}));
 
     // Extract outputSchema if present for MCP structured output support
+    // MCP Inspector requires outputSchema.type to be "object" if provided.
+    // To ensure compatibility, wrap any non-object output schema into an
+    // object schema under a "result" property.
     let output_schema = tool_json.get("outputSchema");
 
     let output_schema_arc = if let Some(schema) = output_schema {
         if schema.is_null() {
             None
         } else {
-            // Convert Value to Map<String, Value> as expected by rmcp 0.5.0
             match schema {
-                Value::Object(map) => Some(Arc::new(map.clone())),
+                // If it's an object and already declares type: object, keep as is
+                Value::Object(map)
+                    if map.get("type").and_then(|v| v.as_str()) == Some("object") =>
+                {
+                    Some(Arc::new(map.clone()))
+                }
+                // Otherwise, wrap the original schema inside an object
                 _ => {
-                    // If it's not an object, we need to wrap it in a map structure
-                    // This preserves the schema structure while making it compatible
-                    let mut wrapper = serde_json::Map::new();
-                    wrapper.insert("schema".to_string(), schema.clone());
-                    Some(Arc::new(wrapper))
+                    let mut props = serde_json::Map::new();
+                    props.insert("result".to_string(), schema.clone());
+
+                    let mut wrapped = serde_json::Map::new();
+                    wrapped.insert("type".to_string(), Value::String("object".to_string()));
+                    wrapped.insert("properties".to_string(), Value::Object(props));
+                    wrapped.insert(
+                        "required".to_string(),
+                        Value::Array(vec![Value::String("result".to_string())]),
+                    );
+                    Some(Arc::new(wrapped))
                 }
             }
         }
@@ -563,22 +577,28 @@ mod tests {
         let output_schema_json =
             serde_json::to_value(&**tool.output_schema.as_ref().unwrap()).unwrap();
         let expected_output = json!({
-            "oneOf": [
-                {
-                    "type": "object",
-                    "properties": {
-                        "ok": {"type": "string"}
-                    },
-                    "required": ["ok"]
-                },
-                {
-                    "type": "object",
-                    "properties": {
-                        "err": {"type": "string"}
-                    },
-                    "required": ["err"]
+            "type": "object",
+            "properties": {
+                "result": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "ok": {"type": "string"}
+                            },
+                            "required": ["ok"]
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "err": {"type": "string"}
+                            },
+                            "required": ["err"]
+                        }
+                    ]
                 }
-            ]
+            },
+            "required": ["result"]
         });
         assert_eq!(output_schema_json, expected_output);
 
