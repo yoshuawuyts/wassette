@@ -18,6 +18,10 @@
 - **Security**: Wassette is built on the Wasmtime security sandbox, providing
   browser-grade isolation of tools.
 
+## Architecture
+
+![An architecture diagram showing the relationship between Wassette, MCP Clients, and Wasm Components](./assets/architecture.png)
+
 ## Installation
 
 For Linux (including Windows Subsystem for Linux) and macOS, you can install Wassette using the provided install script:
